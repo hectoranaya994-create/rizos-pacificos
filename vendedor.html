@@ -180,7 +180,7 @@ header.top{flex-wrap:nowrap}
   <button data-v="clientes" onclick="go('clientes')"><span class="ic">🏪</span>Clientes</button>
   <button data-v="pedido" class="mas" onclick="go('pedido')"><span class="ic">＋</span>Pedido</button>
   <button data-v="mis" onclick="go('mis')"><span class="ic">🧾</span>Mis pedidos<span class="bdg" id="bdgMis"></span></button>
-  <button data-v="prospectos" onclick="go('prospectos')"><span class="ic">🎯</span>Prospectos</button>
+  <button data-v="auto" onclick="go('auto')"><span class="ic">📊</span>Autogestión</button>
 </nav>
 <div id="modal" class="modal hidden" onclick="if(event.target===this)closeModal()">
   <div class="mbox" id="mbox"><div class="mhead"><h3 id="mTitle"></h3><button onclick="closeModal()">×</button></div><div class="mbody" id="mBody"></div></div>
@@ -751,7 +751,7 @@ function render() {
   document.querySelectorAll('#bnav button').forEach(b => b.classList.toggle('on', b.dataset.v === VIEW));
   const rech = misPedidos().filter(o => o.estado === 'rechazado' && !o.reenviadoEn && diasEntre(o.fecha, TODAY()) <= 7).length;
   $('bdgMis').textContent = rech || '';
-  ({ inicio: vInicio, clientes: vClientes, pedido: vPedido, mis: vMis, prospectos: vProspectos })[VIEW]();
+  ({ inicio: vInicio, clientes: vClientes, pedido: vPedido, mis: vMis, auto: vAuto, prospectos: vAuto })[VIEW]();
 }
 
 /* ---------- LOGIN ---------- */
@@ -780,7 +780,7 @@ function salir(silencio) {
 
 /* ---------- INICIO ---------- */
 function vInicio() {
-  const T = TODAY(), dw = diaSemana(T), mp = misPedidos(), cm = comisionVendedor(VID);
+  const T = TODAY(), dw = diaSemana(T), mp = misPedidos();
   const porAprobar = mp.filter(o => o.estado === 'por_aprobar');
   const mc = misClientes();
   const cartera = sum(mc, c => saldoCliente(c.id)), vencida = sum(mc, c => sum(vencidasCliente(c.id), saldoPedido));
@@ -796,10 +796,6 @@ function vInicio() {
   const itemRuta = c => { const v = visitaHoy(c.id), s = saldoCliente(c.id); return `<div class="it"><div class="x" onclick="ficha('${c.id}')" style="cursor:pointer"><b>${esc(c.nombre)}</b><span class="small mut">${esc(c.barrio)}, ${esc(c.municipio)}${s ? ` · <span style="color:${vencidasCliente(c.id).length ? 'var(--bad)' : 'var(--txt)'}">cobrar ${fmtK(s)}</span>` : ''}${v ? ' · ' + fHora(v.ts) : ''}</span></div>${v ? bRes(v.resultado) : `<button class="btn sm acc" onclick="llegue('${c.id}')">📍 Llegué</button>`}</div>`; };
   $('app').innerHTML = `
   <h2>Hola, ${esc(yo().nombre.split(' ')[0])} 👋</h2>
-  ${cm.meta ? `<div class="card"><div class="row between"><h3 style="margin:0">🎯 Meta del mes</h3><b>${cm.avance.toFixed(0)}%</b></div>
-    <div style="position:relative;height:14px;background:#f1ecef;border-radius:8px;margin:10px 0 6px;overflow:hidden"><div style="height:100%;width:${Math.min(100, cm.avance).toFixed(1)}%;background:${cm.avance >= cm.esperado ? 'var(--ok)' : 'var(--acc)'};border-radius:8px"></div><div title="Donde deberías ir hoy" style="position:absolute;top:0;bottom:0;left:${Math.min(100, cm.esperado).toFixed(1)}%;width:2px;background:var(--pri)"></div></div>
-    <div class="small">${fmt(cm.venta)} de ${fmt(cm.meta)} · ${cm.avance >= cm.esperado ? '<b style="color:var(--ok)">vas al día</b>' : `<b style="color:var(--warn)">te faltan ${fmt(cm.meta * cm.esperado / 100 - cm.venta)} para ir al día</b>`}</div>
-    <div class="small mut" style="margin-top:4px">Comisión estimada <b style="color:var(--txt)">${fmt(cm.comision)}</b> (${cm.pct}% sobre ${cm.baseTxt} ${fmt(cm.base)}) · Proyección del mes ${fmtK(cm.proyeccion)}</div></div>` : ''}
   <div class="card"><div class="row between"><h3 style="margin:0">🗺️ Ruta de hoy · ${DIAS_L[dw]}</h3><span class="small"><b>${hechos}/${prog.length}</b> visitados · <b>${conPed}</b> con pedido</span></div>
     <div class="list" style="margin-top:6px">${prog.map(itemRuta).join('') || '<p class="mut">Hoy no tienes clientes programados en ruta.</p>'}</div>
     ${fuera.length ? `<div class="small mut" style="margin-top:8px;font-weight:700">Fuera de ruta</div><div class="list">${fuera.map(id => itemRuta(C(id))).join('')}</div>` : ''}
@@ -817,6 +813,43 @@ function vInicio() {
     ${recuperar.map(x => `<div class="it"><span class="b ${x.e.k}">${x.e.d} días</span><div class="x" onclick="ficha('${x.c.id}')" style="cursor:pointer"><b>${esc(x.c.nombre)}</b><span class="small mut">Sin comprar · visita: ${diasTxt(x.c)}</span></div><button class="btn sm" onclick="iniciarPedido('${x.c.id}')">Pedido</button></div>`).join('')}
   </div></div>` : ''}
   <div class="card"><h3>Últimos pedidos</h3><div class="list">${recientes.map(o => `<div class="it" onclick="verPedido('${o.id}')" style="cursor:pointer"><div class="x"><b>${esc(C(o.clienteId).nombre)}</b><span class="small mut">${fFecha(o.fecha)} ${fHora(o.ts)} · ${fmt(o.total)}${enCola(o.id) ? ' · ⏳ por subir' : ''}</span></div>${bEstado(o.estado)}</div>`).join('') || '<p class="mut">Aún no hay pedidos.</p>'}</div></div>`;
+}
+
+/* ---------- AUTOGESTIÓN: meta, comisión y actividad del mes ---------- */
+function vAuto() {
+  const T = TODAY(), mes = T.slice(0, 7), [y, m] = mes.split('-').map(Number);
+  const mesAnt = iso(new Date(y, m - 2, 1)).slice(0, 7), cm = comisionVendedor(VID), ca = comisionVendedor(VID, mesAnt);
+  const nomMes = k => new Date(k + '-15T12:00:00').toLocaleDateString('es-CO', { month: 'long' });
+  const mp = misPedidos(), delMes = mp.filter(o => VALIDOS.includes(o.estado) && o.fecha.startsWith(mes));
+  const enviados = mp.filter(o => o.fecha.startsWith(mes) && o.estado !== 'anulado').length;
+  const rech = mp.filter(o => o.fecha.startsWith(mes) && o.estado === 'rechazado').length;
+  const vis = visitas().filter(v => v.vendedorId === VID && v.fecha.startsWith(mes)), conPed = vis.filter(v => v.resultado === 'pedido').length;
+  const atendidos = new Set(delMes.map(o => o.clienteId)).size, total = misClientes().length;
+  const fila = (l, v, st) => `<div class="tot"${st ? ` style="${st}"` : ''}><span>${l}</span><span>${v}</span></div>`;
+  $('app').innerHTML = `
+  <h2>📊 Autogestión</h2>
+  ${cm.meta ? `<div class="card"><div class="row between"><h3 style="margin:0">🎯 Meta del mes</h3><b>${cm.avance.toFixed(0)}%</b></div>
+    <div style="position:relative;height:14px;background:#f1ecef;border-radius:8px;margin:10px 0 6px;overflow:hidden"><div style="height:100%;width:${Math.min(100, cm.avance).toFixed(1)}%;background:${cm.avance >= cm.esperado ? 'var(--ok)' : 'var(--acc)'};border-radius:8px"></div><div title="Donde deberías ir hoy" style="position:absolute;top:0;bottom:0;left:${Math.min(100, cm.esperado).toFixed(1)}%;width:2px;background:var(--pri)"></div></div>
+    <div class="small">${fmt(cm.venta)} de ${fmt(cm.meta)} · ${cm.avance >= cm.esperado ? '<b style="color:var(--ok)">vas al día</b>' : `<b style="color:var(--warn)">te faltan ${fmt(cm.meta * cm.esperado / 100 - cm.venta)} para ir al día</b>`}</div>
+    <div class="small mut" style="margin-top:4px">Si sigues a este ritmo cierras el mes en <b style="color:var(--txt)">${fmt(cm.proyeccion)}</b></div></div>` : ''}
+  ${cm.meta ? '' : '<div class="alert info">Aún no tienes meta asignada este mes. Pídesela a administración.</div>'}
+  <div class="card"><h3>💰 Mi comisión · ${nomMes(mes)}</h3>
+    ${fila('Venta facturada', fmt(cm.venta))}
+    ${fila('Recaudo', fmt(cm.recaudo))}
+    ${fila('Base de comisión (' + cm.baseTxt + ')', fmt(cm.base))}
+    ${fila('Porcentaje', cm.pct + '%')}
+    ${fila('Comisión estimada', fmt(cm.comision), 'font-size:18px;font-weight:800;border-top:2px solid var(--line);padding-top:8px;margin-top:4px')}
+    <div class="small mut" style="margin-top:6px">Se calcula sobre lo ${cm.baseTxt === 'recaudo' ? 'recaudado (abonos confirmados + ventas de contado)' : 'facturado'} en el mes. El valor final lo confirma administración.</div>
+    <div class="small" style="margin-top:8px">Mes anterior (${nomMes(mesAnt)}): <b>${fmt(ca.comision)}</b> sobre ${fmt(ca.base)}</div>
+  </div>
+  <div class="card"><h3>📈 Mi actividad del mes</h3>
+    <div class="kpis" style="grid-template-columns:repeat(2,1fr);margin:0">
+      <div class="kpi"><div class="l">Pedidos enviados</div><div class="v">${enviados}</div><div class="s">${rech ? rech + ' rechazados' : 'sin rechazos'}</div></div>
+      <div class="kpi"><div class="l">Ticket promedio</div><div class="v">${fmtK(delMes.length ? cm.venta / delMes.length : 0)}</div><div class="s">${delMes.length} facturados</div></div>
+      <div class="kpi"><div class="l">Visitas</div><div class="v">${vis.length}</div><div class="s">Efectividad ${vis.length ? Math.round(conPed / vis.length * 100) : 0}%</div></div>
+      <div class="kpi"><div class="l">Clientes con compra</div><div class="v">${atendidos}/${total}</div><div class="s">${total ? Math.round(atendidos / total * 100) : 0}% de mi cartera</div></div>
+    </div>
+  </div>`;
 }
 
 /* ---------- VISITAS DE RUTA (check-in con GPS) ---------- */
