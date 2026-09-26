@@ -190,7 +190,15 @@ const EMPRESA = 'Rizos Pacíficos';
 // Para operar de verdad (celular del vendedor ↔ PC de oficina) reemplaza
 // null por el objeto de configuración de tu proyecto Firebase, por ejemplo:
 // const FIREBASE_CONFIG = { apiKey:"...", authDomain:"...", databaseURL:"https://....firebaseio.com", projectId:"...", appId:"..." };
-const FIREBASE_CONFIG = null;
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyBz0NhQzMzup8oFdQZr9sWYZIJIp1s8ZjY",
+  authDomain: "distri-elena.firebaseapp.com",
+  databaseURL: "https://distri-elena-default-rtdb.firebaseio.com",
+  projectId: "distri-elena",
+  storageBucket: "distri-elena.firebasestorage.app",
+  messagingSenderId: "266793024970",
+  appId: "1:266793024970:web:09bbc82d5ba6cf10156333"
+};
 const RAIZ = 'distcap';              // nodo raíz en Realtime Database
 const FB_VER = '10.12.2';
 
@@ -293,6 +301,10 @@ async function conectarFirebase() {
     if (!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
     const db = firebase.database(); fbRoot = db.ref(RAIZ);
     db.ref('.info/connected').on('value', s => { CONECTADO = !!s.val(); pintarConexion(); if (CONECTADO) vaciarCola(); });
+    // Primera vez: si el nodo no tiene config, se carga la demo para poder entrar (admin/admin123).
+    // Luego se puede cambiar a "Empezar en blanco" desde Equipo › Configuración.
+    const cfg = await fbRoot.child('config').once('value');
+    if (!cfg.exists()) { await fbRoot.update(seed()); toast('Base inicializada con datos de demostración'); }
     // Se escucha cada sección por separado para NO descargar el nodo "fotos" completo:
     // las fotos se bajan una por una cuando se necesitan y quedan guardadas en el equipo.
     NODOS.forEach(k => fbRoot.child(k).on('value', s => {
