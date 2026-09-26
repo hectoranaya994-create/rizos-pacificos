@@ -428,6 +428,11 @@ const reportado = o => sum(abonos(o).filter(a => !a.confirmado), a => a.valor);
 const lineasDe = o => (o.lineas || []).filter(Boolean);
 const brutoDe = o => sum(lineasDe(o), l => l.cant * l.precio);
 const calcTotal = (lineas, desc) => Math.round(sum(lineas, l => l.cant * l.precio) * (1 - (desc || 0) / 100));
+// Precios por volumen: productos/{pid}/escalas = [{desde, precio}]. Aplica por línea según la cantidad pedida.
+const escalasDe = p => (p && p.escalas ? vals(p.escalas) : []).filter(e => e && e.desde > 1 && e.precio > 0).sort((a, b) => a.desde - b.desde);
+function precioPara(p, cant) { let pr = p ? p.precio : 0; escalasDe(p).forEach(e => { if (cant >= e.desde) pr = e.precio; }); return pr; }
+const escalasTxt = p => escalasDe(p).map(e => `${e.desde}+ und ${fmt(e.precio)}`).join(' · ');
+const sigEscala = (p, cant) => escalasDe(p).find(e => e.desde > cant);
 function saldoPedido(o) { if (o.pago !== 'credito' || !VALIDOS.includes(o.estado)) return 0; return Math.max(0, o.total - pagado(o)); }
 const pedidosCliente = cid => pedidos().filter(o => o.clienteId === cid && VALIDOS.includes(o.estado));
 const saldoCliente = cid => sum(pedidos().filter(o => o.clienteId === cid), saldoPedido);
@@ -818,7 +823,7 @@ let REV = null;
 function revisar(id) {
   const o = PED(id);
   if (!o || o.estado !== 'por_aprobar') { toast('Este pedido ya no está por aprobar'); return render(); }
-  REV = { id, lineas: lineasDe(o).map(l => ({ ...l, pedido: l.cant, cant: Math.min(l.cant, P(l.pid) ? P(l.pid).stock : 0) })), desc: o.desc || 0, pago: o.pago, externa: '', rechazo: false };
+  REV = { id, lineas: lineasDe(o).map(l => { const cant = Math.min(l.cant, P(l.pid) ? P(l.pid).stock : 0); return { ...l, pedido: l.cant, cant, precio: cant === l.cant ? l.precio : precioPara(P(l.pid), cant) }; }), desc: o.desc || 0, pago: o.pago, externa: '', rechazo: false };
   revRender();
 }
 function revRender() {
@@ -835,7 +840,7 @@ function revRender() {
     </div>
     ${o.nota ? `<div class="alert info">📝 Nota del vendedor: ${esc(o.nota)}</div>` : ''}
     <div class="tw rev"><table><thead><tr><th>Producto</th><th class="n">Pedido</th><th class="n">Stock</th><th class="n">A facturar</th><th class="n">Precio</th><th class="n">Subtotal</th></tr></thead><tbody>
-      ${REV.lineas.map((l, i) => { const p = P(l.pid); return `<tr><td style="white-space:normal">${esc(p.nombre)}<div class="small mut">${esc(p.sku)}</div></td><td class="n">${l.pedido}</td><td class="n"><span class="b ${p.stock >= l.pedido ? 'ok' : p.stock ? 'warn' : 'bad'}">${p.stock}</span></td><td class="n"><input type="number" min="0" max="${p.stock}" value="${l.cant}" onchange="revCant(${i},this.value)"></td><td class="n">${fmt(l.precio)}</td><td class="n">${fmt(l.cant * l.precio)}</td></tr>`; }).join('')}
+      ${REV.lineas.map((l, i) => { const p = P(l.pid); return `<tr><td style="white-space:normal">${esc(p.nombre)}<div class="small mut">${esc(p.sku)}</div></td><td class="n">${l.pedido}</td><td class="n"><span class="b ${p.stock >= l.pedido ? 'ok' : p.stock ? 'warn' : 'bad'}">${p.stock}</span></td><td class="n"><input type="number" min="0" max="${p.stock}" value="${l.cant}" onchange="revCant(${i},this.value)"></td><td class="n">${fmt(l.precio)}${l.precio < p.precio ? '<div class="small" style="color:var(--ok)">x volumen</div>' : ''}</td><td class="n">${fmt(l.cant * l.precio)}</td></tr>`; }).join('')}
     </tbody></table></div>
     <div class="row" style="margin-top:12px;align-items:flex-start;justify-content:space-between">
       <div class="fg" style="flex:1 1 300px">
@@ -860,7 +865,8 @@ function revRender() {
 function revCant(i, v) {
   const l = REV.lineas[i], st = P(l.pid).stock; let n = Math.max(0, parseInt(v, 10) || 0);
   if (n > st) { toast('Stock disponible: ' + st); n = st; }
-  l.cant = n; REV.externa = $('revExt').value; revRender();
+  l.cant = n; l.precio = n === l.pedido ? lineasDe(PED(REV.id))[i].precio : precioPara(P(l.pid), n);
+  REV.externa = $('revExt').value; revRender();
 }
 function rechazar() {
   const mot = $('revMot').value.trim(); if (!mot) return toast('Escribe el motivo para el vendedor');
@@ -1179,14 +1185,14 @@ function tablaInv() {
   const q = FI.q.toLowerCase().trim(), lim = addDays(TODAY(), -30), rot = {}, comp = {};
   pedidos().forEach(o => { if (VALIDOS.includes(o.estado) && o.fecha >= lim) lineasDe(o).forEach(l => rot[l.pid] = (rot[l.pid] || 0) + l.cant); if (o.estado === 'por_aprobar') lineasDe(o).forEach(l => comp[l.pid] = (comp[l.pid] || 0) + l.cant); });
   const rows = productos().filter(p => (!q || (p.sku + ' ' + p.nombre).toLowerCase().includes(q)) && (!FI.cat || p.cat === FI.cat) && (!FI.bajo || p.stock <= p.min) && (!FI.nofoto || !p.foto));
-  $('tbInv').innerHTML = rows.map(p => { const mg = (p.precio - p.costo) / p.precio * 100, r = rot[p.id] || 0, dias = r ? Math.round(p.stock / (r / 30)) : null; return `<tr class="clk" onclick="formProducto('${p.id}')"><td style="padding:5px 8px">${htmlFoto(p, 'sm')}</td><td>${esc(p.sku)}</td><td style="white-space:normal;min-width:200px"><b>${esc(p.nombre)}</b></td><td class="small">${esc(p.cat)}</td><td class="n"><span class="b ${p.stock === 0 ? 'bad' : p.stock <= p.min ? 'warn' : 'ok'}">${p.stock}</span></td><td class="n">${comp[p.id] ? `<span style="color:${comp[p.id] > p.stock ? 'var(--bad)' : 'inherit'}">${comp[p.id]}</span>` : '—'}</td><td class="n">${p.min}</td><td class="n">${fmt(p.costo)}</td><td class="n">${fmt(p.precio)}</td><td class="n">${mg.toFixed(0)}%</td><td class="n">${r} und<div class="small mut">${dias != null ? 'alcanza ~' + dias + ' días' : 'sin movimiento'}</div></td></tr>`; }).join('') || '<tr><td colspan="11" class="mut">Sin resultados.</td></tr>';
+  $('tbInv').innerHTML = rows.map(p => { const mg = (p.precio - p.costo) / p.precio * 100, r = rot[p.id] || 0, dias = r ? Math.round(p.stock / (r / 30)) : null; return `<tr class="clk" onclick="formProducto('${p.id}')"><td style="padding:5px 8px">${htmlFoto(p, 'sm')}</td><td>${esc(p.sku)}</td><td style="white-space:normal;min-width:200px"><b>${esc(p.nombre)}</b></td><td class="small">${esc(p.cat)}</td><td class="n"><span class="b ${p.stock === 0 ? 'bad' : p.stock <= p.min ? 'warn' : 'ok'}">${p.stock}</span></td><td class="n">${comp[p.id] ? `<span style="color:${comp[p.id] > p.stock ? 'var(--bad)' : 'inherit'}">${comp[p.id]}</span>` : '—'}</td><td class="n">${p.min}</td><td class="n">${fmt(p.costo)}</td><td class="n">${fmt(p.precio)}${escalasDe(p).length ? `<div class="small" style="color:var(--ok)">${escalasDe(p).length} escala${escalasDe(p).length > 1 ? 's' : ''}</div>` : ''}</td><td class="n">${mg.toFixed(0)}%</td><td class="n">${r} und<div class="small mut">${dias != null ? 'alcanza ~' + dias + ' días' : 'sin movimiento'}</div></td></tr>`; }).join('') || '<tr><td colspan="11" class="mut">Sin resultados.</td></tr>';
 }
 function formProducto(pid) {
   const p = pid ? P(pid) : { sku: '', nombre: '', cat: 'Cremas para peinar', costo: 0, precio: 0, min: 12, stock: 0 };
-  const cats = [...new Set(productos().map(x => x.cat))];
+  const cats = [...new Set([...Object.keys(ICONO_CAT), ...productos().map(x => x.cat), p.cat].filter(Boolean))].sort((a, b) => a.localeCompare(b));
   openModal(pid ? 'Editar producto' : 'Nuevo producto', `
     ${pid ? `<div class="row" style="align-items:center;gap:14px;margin-bottom:14px">${htmlFoto(p, 'big" style="width:120px;margin:0;font-size:44px')}<div class="row" style="gap:8px"><label class="btn acc btnfile sm">📷 ${p.foto ? 'Cambiar foto' : 'Subir foto'}<input type="file" accept="image/*" onchange="fotoAdmin('${pid}',this)"></label>${p.foto ? `<button class="btn sec sm" onclick="if(confirm('¿Quitar la foto?')){quitarFoto('${pid}');formProducto('${pid}');render()}">Quitar</button>` : ''}${p.foto ? `<div class="small mut" style="width:100%">Subida el ${new Date(p.foto).toLocaleDateString('es-CO')}${p.fotoPor ? ' por ' + esc(p.fotoPor) : ''}</div>` : ''}</div></div>` : '<div class="small mut" style="margin-bottom:10px">Guarda el producto y luego ábrelo para agregarle la foto.</div>'}
-    <div class="fg"><label>Código<input id="fpSku" value="${esc(p.sku)}"></label><label>Categoría<input id="fpCat" list="dlCat" value="${esc(p.cat)}"><datalist id="dlCat">${cats.map(c => `<option value="${esc(c)}">`).join('')}</datalist></label></div>
+    <div class="fg"><label>Código<input id="fpSku" value="${esc(p.sku)}"></label><label>Categoría<select id="fpCat" onchange="$('fpCatN').style.display = this.value === '__nueva' ? '' : 'none'; if (this.value === '__nueva') $('fpCatN').focus()">${cats.map(c => `<option value="${esc(c)}" ${c === p.cat ? 'selected' : ''}>${esc(c)}</option>`).join('')}<option value="__nueva">➕ Nueva categoría…</option></select><input id="fpCatN" placeholder="Nombre de la nueva categoría" style="display:none;margin-top:6px"></label></div>
     <label class="f" style="margin-top:10px">Nombre / descripción<input id="fpNomP" value="${esc(p.nombre)}"></label>
     <div class="fg" style="margin-top:10px">
       <label>Costo<input id="fpCos" type="number" min="0" value="${p.costo}" oninput="margenPrev()"></label>
@@ -1195,6 +1201,10 @@ function formProducto(pid) {
       ${pid ? `<label>Stock actual<input value="${p.stock}" disabled></label>` : `<label>Stock inicial<input id="fpSto" type="number" min="0" value="0"></label>`}
     </div>
     <div class="small mut" id="mgPrev" style="margin-top:8px"></div>
+    <h3 style="margin:14px 0 4px">Precios por cantidad <span class="small mut" style="font-weight:400">(opcional)</span></h3>
+    <div class="small mut" style="margin-bottom:6px">Si el cliente pide desde esa cantidad de este producto, se cobra ese precio por unidad.</div>
+    ${[0, 1, 2].map(i => { const e = escalasDe(p)[i] || {}; return `<div class="fg" style="margin-top:6px"><label>Desde (unidades)<input class="fpEsD" type="number" min="2" value="${e.desde || ''}" placeholder="Ej: ${[12, 24, 48][i]}" oninput="margenPrev()"></label><label>Precio por unidad<input class="fpEsP" type="number" min="0" value="${e.precio || ''}" oninput="margenPrev()"></label></div>`; }).join('')}
+    <div class="small mut" id="esPrev" style="margin-top:6px"></div>
     ${pid ? '<div class="small mut" style="margin-top:4px">El stock cambia con facturas, anulaciones y entradas de mercancía.</div>' : ''}
     <div class="mfoot"><button class="btn sec" onclick="closeModal()">Cancelar</button><button class="btn" onclick="guardarProducto('${pid || ''}')">Guardar</button></div>`);
   margenPrev();
@@ -1205,13 +1215,31 @@ async function fotoAdmin(pid, input) {
   try { await subirFoto(pid, file, 'Administración'); toast('✅ Foto guardada'); formProducto(pid); render(); }
   catch (e) { toast(e.message); }
 }
-function margenPrev() { const c = +$('fpCos').value, p = +$('fpPre').value; $('mgPrev').textContent = p > 0 ? `Margen ${((p - c) / p * 100).toFixed(1)}% · ganancia por unidad ${fmt(p - c)}` : ''; }
+function margenPrev() {
+  const c = +$('fpCos').value, p = +$('fpPre').value; $('mgPrev').textContent = p > 0 ? `Margen ${((p - c) / p * 100).toFixed(1)}% · ganancia por unidad ${fmt(p - c)}` : '';
+  const es = leerEscalas(); if ($('esPrev')) $('esPrev').textContent = es.map(e => `${e.desde}+ und: margen ${((e.precio - c) / e.precio * 100).toFixed(1)}%`).join(' · ');
+}
+function leerEscalas() {
+  const d = [...document.querySelectorAll('.fpEsD')], pr = [...document.querySelectorAll('.fpEsP')];
+  return d.map((x, i) => ({ desde: parseInt(x.value, 10) || 0, precio: +pr[i].value || 0 })).filter(e => e.desde || e.precio).sort((a, b) => a.desde - b.desde);
+}
 function guardarProducto(pid) {
-  const d = { sku: $('fpSku').value.trim().toUpperCase(), cat: $('fpCat').value.trim() || 'Otros', nombre: $('fpNomP').value.trim(), costo: +$('fpCos').value, precio: +$('fpPre').value, min: +$('fpMin').value || 0 };
+  const cat = $('fpCat').value === '__nueva' ? $('fpCatN').value.trim() : $('fpCat').value;
+  if (!cat) return toast('Escribe el nombre de la nueva categoría');
+  const d = { sku: $('fpSku').value.trim().toUpperCase(), cat, nombre: $('fpNomP').value.trim(), costo: +$('fpCos').value, precio: +$('fpPre').value, min: +$('fpMin').value || 0 };
   if (!d.sku || !d.nombre) return toast('Código y nombre son obligatorios');
   if (productos().some(x => x.sku === d.sku && x.id !== pid)) return toast('Ya existe un producto con ese código');
   if (!(d.precio > 0)) return toast('El precio debe ser mayor a 0');
   if (d.precio < d.costo && !confirm('El precio es menor que el costo. ¿Guardar igual?')) return;
+  const es = leerEscalas();
+  for (let i = 0; i < es.length; i++) {
+    const e = es[i];
+    if (!(e.desde > 1) || !(e.precio > 0)) return toast('Cada escala necesita cantidad (desde 2) y precio');
+    if (i && e.desde === es[i - 1].desde) return toast('Hay dos escalas con la misma cantidad');
+    if (e.precio >= (i ? es[i - 1].precio : d.precio)) return toast(`La escala de ${e.desde}+ debe ser más barata que la anterior`);
+  }
+  if (es.some(e => e.precio < d.costo) && !confirm('Alguna escala queda por debajo del costo. ¿Guardar igual?')) return;
+  d.escalas = es.length ? es : null;
   const upd = {};
   if (pid) for (const k in d) upd[`productos/${pid}/${k}`] = d[k];
   else { const id = uid('P'); upd['productos/' + id] = { id, ...d, stock: Math.max(0, +$('fpSto').value || 0) }; }
