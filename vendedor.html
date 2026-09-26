@@ -438,6 +438,11 @@ const reportado = o => sum(abonos(o).filter(a => !a.confirmado), a => a.valor);
 const lineasDe = o => (o.lineas || []).filter(Boolean);
 const brutoDe = o => sum(lineasDe(o), l => l.cant * l.precio);
 const calcTotal = (lineas, desc) => Math.round(sum(lineas, l => l.cant * l.precio) * (1 - (desc || 0) / 100));
+// Precios por volumen: productos/{pid}/escalas = [{desde, precio}]. Aplica por línea según la cantidad pedida.
+const escalasDe = p => (p && p.escalas ? vals(p.escalas) : []).filter(e => e && e.desde > 1 && e.precio > 0).sort((a, b) => a.desde - b.desde);
+function precioPara(p, cant) { let pr = p ? p.precio : 0; escalasDe(p).forEach(e => { if (cant >= e.desde) pr = e.precio; }); return pr; }
+const escalasTxt = p => escalasDe(p).map(e => `${e.desde}+ und ${fmt(e.precio)}`).join(' · ');
+const sigEscala = (p, cant) => escalasDe(p).find(e => e.desde > cant);
 function saldoPedido(o) { if (o.pago !== 'credito' || !VALIDOS.includes(o.estado)) return 0; return Math.max(0, o.total - pagado(o)); }
 const pedidosCliente = cid => pedidos().filter(o => o.clienteId === cid && VALIDOS.includes(o.estado));
 const saldoCliente = cid => sum(pedidos().filter(o => o.clienteId === cid), saldoPedido);
@@ -1049,14 +1054,14 @@ function listaProd() {
 }
 function filaProd(p) {
   const n = CART.items[p.id] || 0;
-  return `<div class="prod ${n ? 'sel' : ''}" id="pr_${p.id}"><div onclick="verProducto('${p.id}')" style="cursor:pointer">${htmlFoto(p)}</div><div class="x"><b>${esc(p.nombre)}</b><span class="small mut">${esc(p.sku)} · <b style="color:var(--txt);display:inline">${fmt(p.precio)}</b> · ${p.stock > 0 ? `<span style="color:${n > p.stock ? 'var(--bad)' : 'var(--mut)'}">disp. ${p.stock}</span>` : '<span style="color:var(--bad)">agotado</span>'}</span></div>
+  return `<div class="prod ${n ? 'sel' : ''}" id="pr_${p.id}"><div onclick="verProducto('${p.id}')" style="cursor:pointer">${htmlFoto(p)}</div><div class="x"><b>${esc(p.nombre)}</b><span class="small mut">${esc(p.sku)} · <b style="color:${precioPara(p, n) < p.precio ? 'var(--ok)' : 'var(--txt)'};display:inline">${fmt(precioPara(p, n))}</b> · ${p.stock > 0 ? `<span style="color:${n > p.stock ? 'var(--bad)' : 'var(--mut)'}">disp. ${p.stock}</span>` : '<span style="color:var(--bad)">agotado</span>'}</span>${escalasDe(p).length ? `<span class="small" style="display:block;color:var(--ok)">${(s => s ? `Faltan ${s.desde - n} para ${fmt(s.precio)}` : 'Mejor precio aplicado')(sigEscala(p, n))} · ${escalasTxt(p)}</span>` : ''}</div>
   <div class="qty"><button onclick="setCant('${p.id}',${n - 1})">−</button><input type="number" inputmode="numeric" min="0" value="${n || ''}" placeholder="0" onchange="setCant('${p.id}',this.value)"><button onclick="setCant('${p.id}',${n + 1})">+</button></div></div>`;
 }
 function verProducto(pid) {
   const p = P(pid), n = CART && CART.items[pid] || 0;
   openModal(p.nombre, `
     ${htmlFoto(p, 'big')}
-    <div class="row between"><div><div class="small mut">${esc(p.sku)} · ${esc(p.cat)}</div><b style="font-size:20px">${fmt(p.precio)}</b></div><span class="b ${p.stock === 0 ? 'bad' : p.stock <= p.min ? 'warn' : 'ok'}">${p.stock ? p.stock + ' disponibles' : 'Agotado'}</span></div>
+    <div class="row between"><div><div class="small mut">${esc(p.sku)} · ${esc(p.cat)}</div><b style="font-size:20px">${fmt(p.precio)}</b>${escalasDe(p).length ? `<div class="small" style="color:var(--ok)">Por cantidad: ${escalasTxt(p)}</div>` : ''}</div><span class="b ${p.stock === 0 ? 'bad' : p.stock <= p.min ? 'warn' : 'ok'}">${p.stock ? p.stock + ' disponibles' : 'Agotado'}</span></div>
     ${p.foto ? `<div class="small mut" style="margin-top:6px">Foto de ${new Date(p.foto).toLocaleDateString('es-CO')}${p.fotoPor ? ' · ' + esc(p.fotoPor) : ''}</div>` : '<div class="alert info">Este producto aún no tiene foto. Tómala para que todo el equipo la vea en el catálogo.</div>'}
     <div class="row" style="margin-top:12px;gap:8px">
       <label class="btn acc btnfile grow">📷 ${p.foto ? 'Cambiar foto' : 'Tomar foto'}<input type="file" accept="image/*" capture="environment" onchange="fotoElegida('${pid}',this)"></label>
@@ -1079,7 +1084,7 @@ function setCant(pid, n) {
   if (n > P(pid).stock) toast(`Solo hay ${P(pid).stock} disponibles. Facturación ajustará.`);
   barraCarrito();
 }
-function lineasCart() { return Object.entries(CART.items).filter(([pid]) => P(pid)).map(([pid, cant]) => ({ pid, cant, precio: P(pid).precio })); }
+function lineasCart() { return Object.entries(CART.items).filter(([pid]) => P(pid)).map(([pid, cant]) => ({ pid, cant, precio: precioPara(P(pid), cant) })); }
 function barraCarrito() {
   const ls = lineasCart(), b = $('cartbar');
   if (!ls.length || VIEW !== 'pedido') { b.style.display = 'none'; return; }
@@ -1092,7 +1097,7 @@ function revisar() {
   const s = saldoCliente(c.id), venc = vencidasCliente(c.id), faltan = ls.filter(l => l.cant > P(l.pid).stock);
   openModal('Revisar pedido', `
     <b>${esc(c.nombre)}</b><div class="small mut" style="margin-bottom:10px">${esc(c.barrio)}, ${esc(c.municipio)}</div>
-    <div class="list">${ls.map(l => { const p = P(l.pid); return `<div class="it"><div class="x"><b style="white-space:normal">${esc(p.nombre)}</b><span class="small mut">${l.cant} × ${fmt(l.precio)}${l.cant > p.stock ? ' · <span style="color:var(--bad)">disp. ' + p.stock + '</span>' : ''}</span></div><b>${fmt(l.cant * l.precio)}</b><button class="btn sm sec" onclick="setCant('${l.pid}',0);${ls.length > 1 ? 'revisar()' : 'closeModal()'}">✕</button></div>`; }).join('')}</div>
+    <div class="list">${ls.map(l => { const p = P(l.pid); return `<div class="it"><div class="x"><b style="white-space:normal">${esc(p.nombre)}</b><span class="small mut">${l.cant} × ${fmt(l.precio)}${l.precio < p.precio ? ' <span style="color:var(--ok)">(precio x volumen)</span>' : ''}${l.cant > p.stock ? ' · <span style="color:var(--bad)">disp. ' + p.stock + '</span>' : ''}</span></div><b>${fmt(l.cant * l.precio)}</b><button class="btn sm sec" onclick="setCant('${l.pid}',0);${ls.length > 1 ? 'revisar()' : 'closeModal()'}">✕</button></div>`; }).join('')}</div>
     <div class="fg" style="margin-top:12px">
       <label>Descuento<select onchange="CART.desc=+this.value;guardarBorrador();revisar()">${desc.map(d => `<option value="${d}" ${CART.desc === d ? 'selected' : ''}>${d}%</option>`).join('')}</select></label>
       <label>Forma de pago<select onchange="CART.pago=this.value;guardarBorrador();revisar()"><option value="contado" ${CART.pago === 'contado' ? 'selected' : ''}>Contado</option>${c.plazo ? `<option value="credito" ${CART.pago === 'credito' ? 'selected' : ''}>Crédito ${c.plazo} días</option>` : ''}</select></label>
