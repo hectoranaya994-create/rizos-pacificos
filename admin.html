@@ -188,7 +188,10 @@ function aplicarMarca(e) {
   const nombre = (e.nombre || '').trim() || 'Rizos Pacíficos';
   if (!window._T0) window._T0 = document.title;
   EMPRESA = nombre; document.title = window._T0.replace('Rizos Pacíficos', nombre);
-  document.querySelectorAll('.logo').forEach(x => x.textContent = (e.iniciales || '').trim().toUpperCase().slice(0, 3) || inicialesDe(nombre));
+  document.querySelectorAll('.logo').forEach(x => {
+    if (e.logo) { x.textContent = ''; x.style.background = `#fff url("${e.logo}") center/cover no-repeat`; }
+    else { x.style.background = ''; x.textContent = (e.iniciales || '').trim().toUpperCase().slice(0, 3) || inicialesDe(nombre); }
+  });
   document.querySelectorAll('[data-marca]').forEach(x => x.textContent = nombre);
   document.querySelectorAll('[data-lema]').forEach(x => x.textContent = (e.lema || '').trim() || 'Distribuidora capilar · Canal TAT Chocó');
 }
@@ -992,7 +995,7 @@ function verPedido(id, recienFacturado, recienDespachado) {
   const o = PED(id), c = C(o.clienteId), bruto = brutoDe(o), saldo = saldoPedido(o);
   openModal(o.factura ? 'Factura ' + o.factura.num : 'Pedido ' + numPedido(o), `
     ${recienFacturado ? '<div class="alert ok">✅ Pedido aprobado y facturado. El stock ya se descontó y el vendedor fue notificado.</div>' : ''}
-    ${recienDespachado ? `<div class="alert info row between" style="gap:8px"><span>🚚 Despachada · quedó <b>En ruta</b>. Imprime la remisión para el conductor.</span><button class="btn sm acc" onclick="imprimir('${o.id}')">🖨 Imprimir remisión</button></div>` : ''}
+    ${recienDespachado ? `<div class="alert info row between" style="gap:8px"><span>🚚 Despachada · quedó <b>En ruta</b>. Imprime la remisión para el conductor.</span><span class="row" style="gap:6px"><button class="btn sm acc" onclick="imprimir('${o.id}')">🖨 Remisión</button><button class="btn sm sec" onclick="imprimirVenta('${o.id}')">🖨 Documento de venta</button></span></div>` : ''}
     <div class="row" style="margin-bottom:10px">${bEstado(o.estado)}<span class="b mut">${o.pago === 'credito' ? 'Crédito · vence ' + fFecha(o.vence) : 'Contado'}</span><span class="small mut">Pedido ${numPedido(o)} · ${esc(V(o.vendedorId).nombre)} · ${fFecha(o.fecha)} ${fHora(o.ts)}</span></div>
     <div style="margin-bottom:10px"><b>${esc(c.nombre)}</b><div class="small mut">${esc(c.contacto)} · ${esc(c.tel)} · ${esc(c.barrio)}, ${esc(c.municipio)}</div></div>
     ${o.factura ? `<div class="row small" style="margin-bottom:8px"><span>Factura interna <b>${o.factura.num}</b> del ${fFecha(o.factura.fecha)}</span><span>· Factura electrónica: <b>${esc(o.factura.externa || 'sin registrar')}</b></span><button class="btn sm sec" onclick="editarExterna('${o.id}')">Editar</button></div>` : ''}
@@ -1009,7 +1012,7 @@ function verPedido(id, recienFacturado, recienDespachado) {
     ${abonos(o).length ? `<h3 style="margin-top:14px">Abonos</h3><div class="list">${abonos(o).sort((a, b) => a.fecha.localeCompare(b.fecha)).map(a => `<div class="it"><span class="b ${a.confirmado ? 'ok' : 'warn'}">${a.confirmado ? 'Confirmado' : 'Por confirmar'}</span><div class="x"><b>${fmt(a.valor)} · ${a.medio}</b><span class="small mut">${fFecha(a.fecha)}${a.reportadoPor ? ' · reportó ' + esc(V(a.reportadoPor).nombre) : ''}</span></div></div>`).join('')}</div>` : ''}
     <div class="mfoot">
       ${!['anulado', 'rechazado', 'por_aprobar'].includes(o.estado) ? `<button class="btn bad" onclick="estado('${o.id}','anulado')">Anular</button>` : ''}
-      ${o.factura && o.estado !== 'anulado' ? `<button class="btn sec" onclick="imprimir('${o.id}')">🖨 Imprimir remisión</button>` : ''}
+      ${o.factura && o.estado !== 'anulado' ? `<button class="btn sec" onclick="imprimirVenta('${o.id}')">🖨 Documento de venta</button><button class="btn sec" onclick="imprimir('${o.id}')">🖨 Remisión</button>` : ''}
       ${saldo ? `<button class="btn acc" onclick="formAbono('${o.id}')">Registrar abono</button>` : ''}
       <a class="btn wa" target="_blank" href="${waLink(c.tel, textoPedido(o))}">WhatsApp al cliente</a>
       ${o.estado === 'facturado' ? `<button class="btn acc" onclick="estado('${o.id}','despachado')">Marcar despachado</button>` : ''}
@@ -1031,7 +1034,7 @@ function imprimirRemisiones(ids) {
 function docRemision(o) {
   const c = C(o.clienteId), bruto = brutoDe(o);
   return `<div class="doc">
-    <div class="hd"><div><h1>${esc(EMPRESA)}</h1><div>Remisión de despacho</div></div><div style="text-align:right"><b>${o.factura.num}</b><br>Fecha: ${fFecha(o.factura.fecha)}<br>${o.factura.externa ? 'Fact. electrónica: ' + esc(o.factura.externa) + '<br>' : ''}Pedido: ${numPedido(o)}</div></div>
+    <div class="hd"><div style="display:flex;align-items:center;gap:10px">${logoDoc(52)}<div><h1>${esc(EMPRESA)}</h1><div>Remisión de despacho</div></div></div><div style="text-align:right"><b>${o.factura.num}</b><br>Fecha: ${fFecha(o.factura.fecha)}<br>${o.factura.externa ? 'Fact. electrónica: ' + esc(o.factura.externa) + '<br>' : ''}Pedido: ${numPedido(o)}</div></div>
     <p><b>Cliente:</b> ${esc(c.nombre)} · ${esc(c.contacto)} · Tel. ${esc(c.tel)}<br><b>Dirección:</b> ${esc(c.barrio)}, ${esc(c.municipio)}<br><b>Vendedor:</b> ${esc(V(o.vendedorId).nombre)} · <b>Pago:</b> ${o.pago === 'credito' ? 'Crédito, vence ' + fFecha(o.vence) : 'Contado'}</p>
     <table><thead><tr><th>Código</th><th>Producto</th><th style="text-align:right">Cant.</th><th style="text-align:right">Precio</th><th style="text-align:right">Subtotal</th></tr></thead><tbody>
     ${lineasDe(o).map(l => `<tr><td>${esc(P(l.pid).sku)}</td><td>${esc(P(l.pid).nombre)}</td><td style="text-align:right">${l.cant}</td><td style="text-align:right">${fmt(l.precio)}</td><td style="text-align:right">${fmt(l.cant * l.precio)}</td></tr>`).join('')}</tbody></table>
@@ -1039,6 +1042,47 @@ function docRemision(o) {
     ${o.nota ? `<p><b>Nota:</b> ${esc(o.nota)}</p>` : ''}
     <div class="firmas"><div>Despachó</div><div>Recibí conforme (firma y sello)</div></div>
     <p style="font-size:10px;margin-top:20px">Documento interno de despacho. No reemplaza la factura electrónica de venta.</p></div>`;
+}
+
+/* ---------- DOCUMENTO DE VENTA (interno, no es factura electrónica) ---------- */
+function imprimirVenta(id) {
+  const o = PED(id), c = C(o.clienteId), e = DB.config.empresa || {}, bruto = brutoDe(o), cred = o.pago === 'credito', ls = lineasDe(o);
+  const logo = (e.iniciales || '').trim().toUpperCase().slice(0, 3) || inicialesDe(EMPRESA);
+  const B = 'border:1px solid #444', L = 'font-size:10px;color:#555;display:block', cel = (l, v) => `<td style="${B};padding:4px 6px;vertical-align:top"><span style="${L}">${l}</span>${v}</td>`;
+  $('print').innerHTML = `<div class="doc" style="-webkit-print-color-adjust:exact;print-color-adjust:exact;font-size:12px">
+    <table style="width:100%;border:0;margin-bottom:8px"><tr>
+      <td style="border:0;vertical-align:top;width:62%">
+        <div style="display:flex;align-items:center;gap:10px">
+          ${e.logo ? logoDoc(70) : `<div style="width:58px;height:58px;border-radius:12px;background:#5b2350;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:22px">${esc(logo)}</div>`}
+          <div><div style="font-size:20px;font-weight:800;color:#5b2350;line-height:1.1">${esc(EMPRESA)}</div>${e.lema ? `<div style="font-size:10px;color:#555">${esc(e.lema)}</div>` : ''}</div>
+        </div>
+        <div style="margin-top:6px;font-size:11px;line-height:1.4">${e.doc ? esc(e.doc) + '<br>' : ''}${[e.dir, e.tel ? 'Tel. ' + e.tel : ''].filter(Boolean).map(esc).join(' · ')}</div>
+      </td>
+      <td style="border:0;vertical-align:top;text-align:right">
+        <div style="display:inline-block;${B};border-radius:8px;padding:8px 12px;text-align:center">
+          <div style="font-size:11px;letter-spacing:.5px">DOCUMENTO DE VENTA No.</div>
+          <div style="font-size:20px;font-weight:800">${o.factura.num}</div>
+        </div>
+      </td></tr></table>
+    <table style="width:100%;border-collapse:collapse;margin-bottom:8px"><tr>
+      ${cel('Cliente', `<b>${esc(c.nombre)}</b>`)}${cel('Fecha', fFecha(o.factura.fecha))}${cel('Forma de pago', cred ? 'Crédito ' + (c.plazo || '') + ' días' : 'Contado')}</tr><tr>
+      ${cel('Contacto · Teléfono', `${esc(c.contacto)} · ${esc(c.tel)}`)}${cel('Vencimiento', cred ? fFecha(o.vence) : '—')}${cel('Pedido', numPedido(o))}</tr><tr>
+      ${cel('Dirección', `${esc(c.barrio)}, ${esc(c.municipio)}`)}${cel('Vendedor', esc(V(o.vendedorId).nombre))}${cel('Referencia DIAN', esc(o.factura.externa || '—'))}</tr></table>
+    <table style="width:100%;border-collapse:collapse"><thead><tr style="background:#eee">
+      <th style="${B};padding:5px;width:26px">#</th><th style="${B};padding:5px">Ref.</th><th style="${B};padding:5px">Detalle</th><th style="${B};padding:5px;text-align:right">Cant.</th><th style="${B};padding:5px;text-align:right">Vr. unit</th><th style="${B};padding:5px;text-align:right">Vr. total</th></tr></thead><tbody>
+      ${ls.map((l, i) => `<tr><td style="${B};padding:4px;text-align:center">${i + 1}</td><td style="${B};padding:4px">${esc(P(l.pid).sku)}</td><td style="${B};padding:4px">${esc(P(l.pid).nombre)}</td><td style="${B};padding:4px;text-align:right">${l.cant}</td><td style="${B};padding:4px;text-align:right">${fmt(l.precio)}</td><td style="${B};padding:4px;text-align:right">${fmt(l.cant * l.precio)}</td></tr>`).join('')}
+    </tbody></table>
+    <div style="margin-top:6px"><b>Observaciones:</b> ${cred ? 'CRÉDITO · vence ' + fFecha(o.vence) : 'CONTADO'}${o.nota ? ' · ' + esc(o.nota) : ''}</div>
+    <table style="width:100%;border-collapse:collapse;margin-top:10px"><tr>
+      <td style="${B};padding:6px;vertical-align:top;width:60%">Total ítems: <b>${ls.length}</b> · Unidades: <b>${sum(ls, l => l.cant)}</b>
+        ${cred && pagado(o) ? `<div style="margin-top:6px">Abonado: <b>${fmt(pagado(o))}</b> · Saldo: <b>${fmt(saldoPedido(o))}</b></div>` : ''}</td>
+      <td style="${B};padding:6px">
+        <div class="tot"><span>Subtotal</span><span>${fmt(bruto)}</span></div>
+        <div class="tot"><span>Descuento${o.desc ? ' ' + o.desc + '%' : ''}</span><span>${o.desc ? '−' + fmt(bruto - o.total) : fmt(0)}</span></div>
+        <div class="tot big"><span>TOTAL</span><span>${fmt(o.total)}</span></div></td></tr></table>
+    <div class="firmas"><div>Entregó</div><div>Recibí conforme (firma y sello)</div></div>
+    <p style="font-size:10px;margin-top:16px;color:#555">Documento interno de venta. No es factura electrónica de venta.</p></div>`;
+  setTimeout(() => window.print(), 50);
 }
 
 /* ---------- CLIENTES ---------- */
@@ -1483,9 +1527,13 @@ function vEquipo() {
       <label class="f" style="margin-top:10px">Descuento máximo que puede dar el vendedor<select id="cfD">${[0, 2, 3, 5, 8, 10].map(d => `<option value="${d}" ${(DB.config.descMaxVendedor || 0) === d ? 'selected' : ''}>${d}%</option>`).join('')}</select></label>
       <div class="mfoot"><button class="btn" onclick="guardarConfig()">Guardar ajustes</button></div></div>
     <div class="card"><h3>Empresa</h3>
+      <div class="row" style="gap:12px;margin-bottom:10px">${(DB.config.empresa || {}).logo ? `<img src="${(DB.config.empresa || {}).logo}" style="width:72px;height:72px;object-fit:contain;border-radius:12px;border:1px solid var(--line);background:#fff">` : '<div class="ph" style="width:72px;height:72px;font-size:13px;text-align:center">Sin logo</div>'}
+        <div class="row" style="gap:6px"><label class="btn sm acc btnfile">🖼 ${(DB.config.empresa || {}).logo ? 'Cambiar logo' : 'Subir logo'}<input type="file" accept="image/*" onchange="subirLogo(this)"></label>${(DB.config.empresa || {}).logo ? '<button class="btn sm sec" onclick="quitarLogo()">Quitar</button>' : ''}</div></div>
       <div class="fg"><label>Nombre de la empresa<input id="cfEN" value="${esc((DB.config.empresa || {}).nombre || EMPRESA)}" oninput="$('cfEI').placeholder = inicialesDe(this.value)"></label><label>Iniciales del logo<input id="cfEI" maxlength="3" value="${esc((DB.config.empresa || {}).iniciales || '')}" placeholder="${esc(inicialesDe(EMPRESA))}"></label></div>
       <label class="f" style="margin-top:10px">Frase (página de inicio)<input id="cfEL" value="${esc((DB.config.empresa || {}).lema || '')}" placeholder="Distribuidora capilar · Canal TAT Chocó"></label>
-      <p class="small mut">Aparece en el encabezado, remisiones, planillas y mensajes de WhatsApp del admin y de los vendedores.</p>
+      <div class="fg" style="margin-top:10px"><label>NIT o cédula<input id="cfED" value="${esc((DB.config.empresa || {}).doc || '')}" placeholder="Ej: CC 1.077.000.000"></label><label>Teléfono / WhatsApp<input id="cfET" value="${esc((DB.config.empresa || {}).tel || '')}"></label></div>
+      <label class="f" style="margin-top:10px">Dirección<input id="cfEA" value="${esc((DB.config.empresa || {}).dir || '')}" placeholder="Ej: Cra 4 # 25-10, Quibdó"></label>
+      <p class="small mut">Aparece en el encabezado, documentos de venta, remisiones, planillas y mensajes de WhatsApp.</p>
       <div class="mfoot"><button class="btn" onclick="guardarEmpresa()">Guardar empresa</button></div></div>
     <div class="card"><h3>Datos</h3>
       <p class="small">Modo actual: <b>${MODO === 'local' ? 'Demo local (solo este navegador)' : 'Firebase · en la nube'}</b></p>
@@ -1512,10 +1560,19 @@ function guardarVendedor(id) {
   const nid = id || 'V' + (Math.max(0, ...vendedores().map(x => parseInt(x.id.slice(1), 10) || 0)) + 1);
   guardar({ ['vendedores/' + nid]: { id: nid, ...d } }); closeModal(); render(); toast('Vendedor guardado');
 }
+async function subirLogo(input) {
+  const file = input.files && input.files[0]; if (!file) return;
+  if (!/^image\//.test(file.type)) return toast('El archivo no es una imagen');
+  try { const data = await comprimirImagen(file, 320, 0.88); guardar({ 'config/empresa/logo': data }); aplicarMarca(); render(); toast('✅ Logo guardado'); }
+  catch (e) { toast(e.message || 'No se pudo leer la imagen'); }
+}
+function quitarLogo() { if (!confirm('¿Quitar el logo?')) return; guardar({ 'config/empresa/logo': null }); aplicarMarca(); render(); }
+const logoDoc = (px) => { const e = DB.config.empresa || {}; return e.logo ? `<img src="${e.logo}" style="width:${px}px;height:${px}px;object-fit:contain">` : ''; };
 function guardarEmpresa() {
-  const e = { nombre: $('cfEN').value.trim(), iniciales: $('cfEI').value.trim().toUpperCase(), lema: $('cfEL').value.trim() };
+  const e = { nombre: $('cfEN').value.trim(), iniciales: $('cfEI').value.trim().toUpperCase(), lema: $('cfEL').value.trim(), doc: $('cfED').value.trim(), tel: $('cfET').value.trim(), dir: $('cfEA').value.trim() };
   if (!e.nombre) return toast('Escribe el nombre de la empresa');
-  guardar({ 'config/empresa': e }); aplicarMarca(e); render(); toast('Empresa guardada');
+  const upd = {}; for (const k in e) upd['config/empresa/' + k] = e[k];
+  guardar(upd); aplicarMarca(); render(); toast('Empresa guardada');
 }
 function guardarConfig() {
   const upd = { 'config/admin/usuario': $('cfU').value.trim() || 'admin', 'config/descMaxVendedor': +$('cfD').value };

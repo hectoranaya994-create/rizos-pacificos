@@ -200,7 +200,10 @@ function aplicarMarca(e) {
   const nombre = (e.nombre || '').trim() || 'Rizos Pacíficos';
   if (!window._T0) window._T0 = document.title;
   EMPRESA = nombre; document.title = window._T0.replace('Rizos Pacíficos', nombre);
-  document.querySelectorAll('.logo').forEach(x => x.textContent = (e.iniciales || '').trim().toUpperCase().slice(0, 3) || inicialesDe(nombre));
+  document.querySelectorAll('.logo').forEach(x => {
+    if (e.logo) { x.textContent = ''; x.style.background = `#fff url("${e.logo}") center/cover no-repeat`; }
+    else { x.style.background = ''; x.textContent = (e.iniciales || '').trim().toUpperCase().slice(0, 3) || inicialesDe(nombre); }
+  });
   document.querySelectorAll('[data-marca]').forEach(x => x.textContent = nombre);
   document.querySelectorAll('[data-lema]').forEach(x => x.textContent = (e.lema || '').trim() || 'Distribuidora capilar · Canal TAT Chocó');
 }
