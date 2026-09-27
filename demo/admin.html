@@ -199,7 +199,7 @@ const FIREBASE_CONFIG = {
   appId: "1:266793024970:web:09bbc82d5ba6cf10156333"
 };
 // DEMO = true → nodo y memoria local separados, se llena con datos de prueba. DEMO = false → producción.
-const DEMO = false;
+const DEMO = true;
 const RAIZ = DEMO ? 'distcap' : 'rizos';   // nodo raíz: 'distcap' = datos de prueba, 'rizos' = operación real
 const PFX = DEMO ? 'rp_demo_' : 'rp_';            // prefijo de memoria local (no mezclar demo y producción)
 if (DEMO) { document.title = '[DEMO] ' + document.title; document.addEventListener('DOMContentLoaded', () => document.body.insertAdjacentHTML('afterbegin', '<div style="background:#d9892b;color:#fff;text-align:center;font-weight:700;font-size:12px;padding:4px">MODO DEMO · datos de prueba, no es la operación real</div>')); }
