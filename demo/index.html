@@ -146,7 +146,7 @@ td.n,th.n{text-align:right}
 </style>
 </head>
 <body>
-<header class="top"><div class="logo">RP</div><div class="brand"><h1>Rizos Pacíficos</h1><small>Distribuidora capilar · Canal TAT Chocó</small></div></header>
+<header class="top"><div class="logo">RP</div><div class="brand"><h1 data-marca>Rizos Pacíficos</h1><small data-lema>Distribuidora capilar · Canal TAT Chocó</small></div></header>
 <div class="wrap">
   <h2>¿Cómo vas a entrar?</h2>
   <div class="opc">
@@ -165,7 +165,17 @@ td.n,th.n{text-align:right}
    ===================================================================== */
 
 /* ---------- CONFIGURACIÓN ---------- */
-const EMPRESA = 'Rizos Pacíficos';
+let EMPRESA = 'Rizos Pacíficos';   // se reemplaza con config/empresa (Equipo y ajustes › Empresa)
+function inicialesDe(n) { return String(n || '').trim().split(/\s+/).filter(w => w.length > 2 || /^[A-ZÁÉÍÓÚ]/.test(w)).slice(0, 2).map(w => w[0]).join('').toUpperCase() || 'RP'; }
+function aplicarMarca(e) {
+  e = e || (typeof DB !== 'undefined' && DB.config && DB.config.empresa) || {};
+  const nombre = (e.nombre || '').trim() || 'Rizos Pacíficos';
+  if (!window._T0) window._T0 = document.title;
+  EMPRESA = nombre; document.title = window._T0.replace('Rizos Pacíficos', nombre);
+  document.querySelectorAll('.logo').forEach(x => x.textContent = (e.iniciales || '').trim().toUpperCase().slice(0, 3) || inicialesDe(nombre));
+  document.querySelectorAll('[data-marca]').forEach(x => x.textContent = nombre);
+  document.querySelectorAll('[data-lema]').forEach(x => x.textContent = (e.lema || '').trim() || 'Distribuidora capilar · Canal TAT Chocó');
+}
 
 // MODO: si FIREBASE_CONFIG es null el sistema corre en MODO DEMO LOCAL:
 // los datos viven en este navegador y el vendedor y el admin se comunican
@@ -299,7 +309,7 @@ async function conectarFirebase() {
   fbIniciando = false;
 }
 function iniciarDatos(cb) {
-  onDatos = cb;
+  onDatos = (...a) => { aplicarMarca(); cb(...a); };
   DB = lsGet(LS_DB, null);
   if (MODO === 'local') {
     if (!DB || !DB.config) { DB = seed(); cachear(); }
@@ -678,6 +688,7 @@ function datosVacios() {
 }
 </script>
 <script>
+if (FIREBASE_CONFIG) fetch(FIREBASE_CONFIG.databaseURL + '/' + RAIZ + '/config/empresa.json').then(r => r.json()).then(e => e && aplicarMarca(e)).catch(() => {});
 document.getElementById('nota').innerHTML = DEMO ? '<b>Modo demo:</b> datos de prueba para practicar. Vendedor: carlos / 1234 · Admin: admin / admin123.' : MODO === 'local'
   ? '<b>Modo demo:</b> abre el vendedor y la facturación en dos pestañas de este mismo navegador para ver cómo llegan los pedidos en vivo. Vendedor: carlos / 1234 · Admin: admin / admin123.'
   : 'Conectado a la nube: los pedidos del celular llegan a la oficina en tiempo real.';

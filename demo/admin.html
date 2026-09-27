@@ -153,7 +153,7 @@ td.n,th.n{text-align:right}
 <body>
 <header class="top">
   <div class="logo">RP</div>
-  <div class="brand"><h1>Facturación y administración</h1><small id="hdSub">Rizos Pacíficos</small></div>
+  <div class="brand"><h1>Facturación y administración</h1><small id="hdSub" data-marca>Rizos Pacíficos</small></div>
   <div class="sp"></div>
   <span class="pill" id="conexion"></span>
   <button class="salir" id="btnSalir" onclick="salir()" style="display:none">Salir</button>
@@ -181,7 +181,17 @@ td.n,th.n{text-align:right}
    ===================================================================== */
 
 /* ---------- CONFIGURACIÓN ---------- */
-const EMPRESA = 'Rizos Pacíficos';
+let EMPRESA = 'Rizos Pacíficos';   // se reemplaza con config/empresa (Equipo y ajustes › Empresa)
+function inicialesDe(n) { return String(n || '').trim().split(/\s+/).filter(w => w.length > 2 || /^[A-ZÁÉÍÓÚ]/.test(w)).slice(0, 2).map(w => w[0]).join('').toUpperCase() || 'RP'; }
+function aplicarMarca(e) {
+  e = e || (typeof DB !== 'undefined' && DB.config && DB.config.empresa) || {};
+  const nombre = (e.nombre || '').trim() || 'Rizos Pacíficos';
+  if (!window._T0) window._T0 = document.title;
+  EMPRESA = nombre; document.title = window._T0.replace('Rizos Pacíficos', nombre);
+  document.querySelectorAll('.logo').forEach(x => x.textContent = (e.iniciales || '').trim().toUpperCase().slice(0, 3) || inicialesDe(nombre));
+  document.querySelectorAll('[data-marca]').forEach(x => x.textContent = nombre);
+  document.querySelectorAll('[data-lema]').forEach(x => x.textContent = (e.lema || '').trim() || 'Distribuidora capilar · Canal TAT Chocó');
+}
 
 // MODO: si FIREBASE_CONFIG es null el sistema corre en MODO DEMO LOCAL:
 // los datos viven en este navegador y el vendedor y el admin se comunican
@@ -319,7 +329,7 @@ async function conectarFirebase() {
   fbIniciando = false;
 }
 function iniciarDatos(cb) {
-  onDatos = cb;
+  onDatos = (...a) => { aplicarMarca(); cb(...a); };
   DB = lsGet(LS_DB, null);
   if (MODO === 'local') {
     if (!DB || !DB.config) { DB = seed(); cachear(); }
@@ -725,7 +735,7 @@ function vigilar() {
     }
   }
   PREV_AP = ids;
-  document.title = (ap.length ? `(${ap.length}) ` : '') + TITULO;
+  document.title = (ap.length ? `(${ap.length}) ` : '') + TITULO.replace('Rizos Pacíficos', EMPRESA);
 }
 function go(v) { VIEW = v; render(); window.scrollTo(0, 0); }
 function render() {
@@ -931,7 +941,7 @@ function estado(id, est) {
     abonos(o).filter(a => !a.confirmado).forEach(a => upd[`pedidos/${id}/abonos/${a.id}`] = null);
   }
   guardar(upd); render();
-  if (est === 'despachado') { closeModal(); toast((o.factura ? o.factura.num : id) + ' despachada · imprimiendo remisión'); return imprimirRemisiones([id]); }
+  if (est === 'despachado') { verPedido(id, false, true); return toast((o.factura ? o.factura.num : id) + ': en ruta'); }
   if (modalAbierto()) verPedido(id);
   toast((o.factura ? o.factura.num : id) + ': ' + ESTADOS[est][1].toLowerCase());
 }
@@ -978,10 +988,11 @@ function despacharSel() {
   guardar(upd); ALI = null; closeModal(); render(); toast(sel.length + ' facturas despachadas');
   if (confirm(`¿Imprimir las ${sel.length} remisiones de despacho?`)) imprimirRemisiones(sel.map(o => o.id));
 }
-function verPedido(id, recienFacturado) {
+function verPedido(id, recienFacturado, recienDespachado) {
   const o = PED(id), c = C(o.clienteId), bruto = brutoDe(o), saldo = saldoPedido(o);
   openModal(o.factura ? 'Factura ' + o.factura.num : 'Pedido ' + numPedido(o), `
     ${recienFacturado ? '<div class="alert ok">✅ Pedido aprobado y facturado. El stock ya se descontó y el vendedor fue notificado.</div>' : ''}
+    ${recienDespachado ? `<div class="alert info row between" style="gap:8px"><span>🚚 Despachada · quedó <b>En ruta</b>. Imprime la remisión para el conductor.</span><button class="btn sm acc" onclick="imprimir('${o.id}')">🖨 Imprimir remisión</button></div>` : ''}
     <div class="row" style="margin-bottom:10px">${bEstado(o.estado)}<span class="b mut">${o.pago === 'credito' ? 'Crédito · vence ' + fFecha(o.vence) : 'Contado'}</span><span class="small mut">Pedido ${numPedido(o)} · ${esc(V(o.vendedorId).nombre)} · ${fFecha(o.fecha)} ${fHora(o.ts)}</span></div>
     <div style="margin-bottom:10px"><b>${esc(c.nombre)}</b><div class="small mut">${esc(c.contacto)} · ${esc(c.tel)} · ${esc(c.barrio)}, ${esc(c.municipio)}</div></div>
     ${o.factura ? `<div class="row small" style="margin-bottom:8px"><span>Factura interna <b>${o.factura.num}</b> del ${fFecha(o.factura.fecha)}</span><span>· Factura electrónica: <b>${esc(o.factura.externa || 'sin registrar')}</b></span><button class="btn sm sec" onclick="editarExterna('${o.id}')">Editar</button></div>` : ''}
@@ -1471,6 +1482,11 @@ function vEquipo() {
       <div class="fg"><label>Usuario<input id="cfU" value="${esc(DB.config.admin.usuario)}"></label><label>Clave nueva<input id="cfC" type="password" placeholder="Dejar vacío para no cambiar"></label></div>
       <label class="f" style="margin-top:10px">Descuento máximo que puede dar el vendedor<select id="cfD">${[0, 2, 3, 5, 8, 10].map(d => `<option value="${d}" ${(DB.config.descMaxVendedor || 0) === d ? 'selected' : ''}>${d}%</option>`).join('')}</select></label>
       <div class="mfoot"><button class="btn" onclick="guardarConfig()">Guardar ajustes</button></div></div>
+    <div class="card"><h3>Empresa</h3>
+      <div class="fg"><label>Nombre de la empresa<input id="cfEN" value="${esc((DB.config.empresa || {}).nombre || EMPRESA)}" oninput="$('cfEI').placeholder = inicialesDe(this.value)"></label><label>Iniciales del logo<input id="cfEI" maxlength="3" value="${esc((DB.config.empresa || {}).iniciales || '')}" placeholder="${esc(inicialesDe(EMPRESA))}"></label></div>
+      <label class="f" style="margin-top:10px">Frase (página de inicio)<input id="cfEL" value="${esc((DB.config.empresa || {}).lema || '')}" placeholder="Distribuidora capilar · Canal TAT Chocó"></label>
+      <p class="small mut">Aparece en el encabezado, remisiones, planillas y mensajes de WhatsApp del admin y de los vendedores.</p>
+      <div class="mfoot"><button class="btn" onclick="guardarEmpresa()">Guardar empresa</button></div></div>
     <div class="card"><h3>Datos</h3>
       <p class="small">Modo actual: <b>${MODO === 'local' ? 'Demo local (solo este navegador)' : 'Firebase · en la nube'}</b></p>
       <div class="row"><button class="btn sec" onclick="respaldo()">⬇ Descargar copia de seguridad</button></div>
@@ -1495,6 +1511,11 @@ function guardarVendedor(id) {
   if (vendedores().some(x => x.usuario === d.usuario && x.id !== id)) return toast('Ese usuario ya existe');
   const nid = id || 'V' + (Math.max(0, ...vendedores().map(x => parseInt(x.id.slice(1), 10) || 0)) + 1);
   guardar({ ['vendedores/' + nid]: { id: nid, ...d } }); closeModal(); render(); toast('Vendedor guardado');
+}
+function guardarEmpresa() {
+  const e = { nombre: $('cfEN').value.trim(), iniciales: $('cfEI').value.trim().toUpperCase(), lema: $('cfEL').value.trim() };
+  if (!e.nombre) return toast('Escribe el nombre de la empresa');
+  guardar({ 'config/empresa': e }); aplicarMarca(e); render(); toast('Empresa guardada');
 }
 function guardarConfig() {
   const upd = { 'config/admin/usuario': $('cfU').value.trim() || 'admin', 'config/descMaxVendedor': +$('cfD').value };

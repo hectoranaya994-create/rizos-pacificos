@@ -193,7 +193,17 @@ header.top{flex-wrap:nowrap}
    ===================================================================== */
 
 /* ---------- CONFIGURACIÓN ---------- */
-const EMPRESA = 'Rizos Pacíficos';
+let EMPRESA = 'Rizos Pacíficos';   // se reemplaza con config/empresa (Equipo y ajustes › Empresa)
+function inicialesDe(n) { return String(n || '').trim().split(/\s+/).filter(w => w.length > 2 || /^[A-ZÁÉÍÓÚ]/.test(w)).slice(0, 2).map(w => w[0]).join('').toUpperCase() || 'RP'; }
+function aplicarMarca(e) {
+  e = e || (typeof DB !== 'undefined' && DB.config && DB.config.empresa) || {};
+  const nombre = (e.nombre || '').trim() || 'Rizos Pacíficos';
+  if (!window._T0) window._T0 = document.title;
+  EMPRESA = nombre; document.title = window._T0.replace('Rizos Pacíficos', nombre);
+  document.querySelectorAll('.logo').forEach(x => x.textContent = (e.iniciales || '').trim().toUpperCase().slice(0, 3) || inicialesDe(nombre));
+  document.querySelectorAll('[data-marca]').forEach(x => x.textContent = nombre);
+  document.querySelectorAll('[data-lema]').forEach(x => x.textContent = (e.lema || '').trim() || 'Distribuidora capilar · Canal TAT Chocó');
+}
 
 // MODO: si FIREBASE_CONFIG es null el sistema corre en MODO DEMO LOCAL:
 // los datos viven en este navegador y el vendedor y el admin se comunican
@@ -330,7 +340,7 @@ async function conectarFirebase() {
   fbIniciando = false;
 }
 function iniciarDatos(cb) {
-  onDatos = cb;
+  onDatos = (...a) => { aplicarMarca(); cb(...a); };
   DB = lsGet(LS_DB, null);
   if (MODO === 'local') {
     if (!DB || !DB.config) { DB = seed(); cachear(); }
