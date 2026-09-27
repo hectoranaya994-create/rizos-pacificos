@@ -1168,7 +1168,7 @@ const FI = { q: '', cat: '', bajo: false, nofoto: false };
 function vInventario() {
   const ps = productos(), cats = [...new Set(ps.map(p => p.cat))];
   $('app').innerHTML = `
-  <div class="row between"><h2>Inventario</h2><div class="row"><button class="btn sec" onclick="historialCompras()">Historial de compras</button><button class="btn acc" onclick="entradaMercancia()">+ Entrada de mercancía</button><button class="btn" onclick="formProducto()">+ Producto</button></div></div>
+  <div class="row between"><h2>Inventario</h2><div class="row"><button class="btn sec" onclick="historialCompras()">Historial de compras</button><button class="btn acc" onclick="entradaMercancia()">+ Entrada de mercancía</button><button class="btn sec" onclick="importarProductos()">⬆ Importar desde Excel</button><button class="btn" onclick="formProducto()">+ Producto</button></div></div>
   <div class="kpis">
     <div class="kpi"><div class="l">Referencias</div><div class="v">${ps.length}</div><div class="s">${sum(ps, p => p.stock).toLocaleString('es-CO')} unidades</div></div>
     <div class="kpi"><div class="l">Inventario al costo</div><div class="v">${fmt(sum(ps, p => p.stock * p.costo))}</div><div class="s">A precio de venta ${fmt(sum(ps, p => p.stock * p.precio))}</div></div>
@@ -1247,6 +1247,67 @@ function guardarProducto(pid) {
   if (pid) for (const k in d) upd[`productos/${pid}/${k}`] = d[k];
   else { const id = uid('P'); upd['productos/' + id] = { id, ...d, stock: Math.max(0, +$('fpSto').value || 0) }; }
   guardar(upd); closeModal(); render(); toast('Producto guardado');
+}
+/* ---------- IMPORTAR PRODUCTOS (copiar y pegar desde Excel) ---------- */
+// Encabezados reconocidos (en cualquier orden): Código, Producto, Categoría, Costo, Precio, Stock inicial, Stock mínimo,
+// Escala 1 desde, Escala 1 precio, Escala 2 desde, Escala 2 precio, Escala 3 desde, Escala 3 precio.
+// Si el código ya existe se actualizan nombre, categoría, costo, precio, mínimo y escalas; el stock NO se toca.
+let IMP = null;
+const normH = h => String(h || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, '');
+const numCO = v => { v = String(v ?? '').trim().replace(/[$\s]/g, ''); if (!v) return null; if (/^\d{1,3}(\.\d{3})+(,\d+)?$/.test(v)) v = v.replace(/\./g, '').replace(',', '.'); else if (/^\d+,\d+$/.test(v)) v = v.replace(',', '.'); else v = v.replace(/,/g, ''); const n = Number(v); return isFinite(n) ? n : NaN; };
+function importarProductos() {
+  IMP = { filas: [] };
+  openModal('Importar productos desde Excel', `
+    <div class="small mut">1. En Excel selecciona la tabla <b>incluyendo la fila de títulos</b> (Código, Producto, Categoría, Costo, Precio, Stock inicial…) y cópiala (Ctrl+C).<br>2. Haz clic abajo y pega (Ctrl+V).<br>3. Revisa la vista previa y dale <b>Importar</b>.</div>
+    <textarea id="impTxt" style="min-height:140px;margin-top:10px;font-family:monospace;font-size:12px" placeholder="Pega aquí…" oninput="impLeer()"></textarea>
+    <div id="impPrev" style="margin-top:10px"></div>`, true);
+  setTimeout(() => $('impTxt') && $('impTxt').focus(), 50);
+}
+function impLeer() {
+  const lineas = $('impTxt').value.replace(/\r/g, '').split('\n').filter(l => l.trim());
+  const out = $('impPrev'); IMP.filas = [];
+  if (!lineas.length) { out.innerHTML = ''; return; }
+  let hi = lineas.findIndex(l => l.split('\t').some(c => normH(c) === 'producto'));
+  if (hi < 0) { out.innerHTML = '<div class="alert bad">No encuentro la fila de títulos. Copia la tabla incluyendo los títulos (debe haber una columna "Producto").</div>'; return; }
+  const H = lineas[hi].split('\t').map(normH), col = k => H.indexOf(k);
+  const ix = { cod: col('codigo'), nom: col('producto'), cat: col('categoria'), cos: col('costo'), pre: col('precio'), sto: col('stockinicial'), min: col('stockminimo') };
+  const esc3 = [1, 2, 3].map(n => [col('escala' + n + 'desde'), col('escala' + n + 'precio')]);
+  const porSku = {}; productos().forEach(p => porSku[p.sku] = p);
+  const vistos = new Set();
+  lineas.slice(hi + 1).forEach((l, i) => {
+    const c = l.split('\t'), g = k => ix[k] >= 0 ? String(c[ix[k]] ?? '').trim() : '';
+    const nombre = g('nom').replace(/\s+/g, ' ');
+    if (!nombre) return;
+    const errs = [];
+    let sku = g('cod').toUpperCase(); if (!sku) errs.push('sin código');
+    if (sku && vistos.has(sku)) errs.push('código repetido en la lista'); vistos.add(sku);
+    const costo = numCO(g('cos')) ?? 0, precio = numCO(g('pre')), stock = numCO(g('sto')) ?? 0, min = numCO(g('min')) ?? 0;
+    if (!(precio > 0)) errs.push('falta precio'); if (isNaN(costo) || isNaN(stock) || isNaN(min)) errs.push('número inválido');
+    const escalas = esc3.map(([d, p]) => ({ desde: d >= 0 ? parseInt(numCO(c[d]), 10) || 0 : 0, precio: p >= 0 ? numCO(c[p]) || 0 : 0 })).filter(e => e.desde || e.precio);
+    escalas.forEach((e, j) => { if (!(e.desde > 1 && e.precio > 0)) errs.push('escala incompleta'); else if (e.precio >= (j ? escalas[j - 1].precio : precio)) errs.push('escala no es más barata'); });
+    const existe = porSku[sku];
+    IMP.filas.push({ sku, nombre, cat: g('cat') || 'Otros', costo, precio, stock: Math.max(0, Math.round(stock || 0)), min: Math.max(0, Math.round(min || 0)), escalas, existe, errs: [...new Set(errs)], bajoCosto: precio > 0 && costo > precio });
+  });
+  const ok = IMP.filas.filter(f => !f.errs.length), nuevos = ok.filter(f => !f.existe).length, act = ok.length - nuevos, mal = IMP.filas.length - ok.length;
+  out.innerHTML = `
+    <div class="row" style="gap:6px;margin-bottom:8px"><span class="b ok">${nuevos} nuevos</span><span class="b info">${act} se actualizan</span>${mal ? `<span class="b bad">${mal} con errores (no se importan)</span>` : ''}${IMP.filas.some(f => f.bajoCosto) ? '<span class="b warn">precio menor que costo</span>' : ''}</div>
+    <div class="tw" style="max-height:320px;overflow:auto"><table><thead><tr><th>Código</th><th>Producto</th><th>Categoría</th><th class="n">Costo</th><th class="n">Precio</th><th class="n">Stock</th><th>Escalas</th><th>Estado</th></tr></thead><tbody>
+    ${IMP.filas.map(f => `<tr><td>${esc(f.sku)}</td><td style="white-space:normal;min-width:220px">${esc(f.nombre)}</td><td>${esc(f.cat)}</td><td class="n">${fmt(f.costo)}</td><td class="n">${f.precio > 0 ? fmt(f.precio) : '—'}</td><td class="n">${f.existe ? '<span class="mut">no cambia</span>' : f.stock}</td><td class="small">${f.escalas.map(e => e.desde + '+ ' + fmt(e.precio)).join(' · ')}</td><td>${f.errs.length ? `<span class="b bad">${esc(f.errs.join(', '))}</span>` : f.existe ? '<span class="b info">Actualiza</span>' : '<span class="b ok">Nuevo</span>'}${f.bajoCosto ? ' <span class="b warn">bajo costo</span>' : ''}</td></tr>`).join('')}
+    </tbody></table></div>
+    <div class="mfoot"><button class="btn sec" onclick="closeModal()">Cancelar</button><button class="btn" id="btnImp" ${ok.length ? '' : 'disabled'} onclick="impGuardar()">Importar ${ok.length} productos</button></div>`;
+}
+function impGuardar() {
+  const ok = IMP.filas.filter(f => !f.errs.length); if (!ok.length) return;
+  if (!confirm(`¿Importar ${ok.length} productos?`)) return;
+  const upd = {}, porSku = {}; productos().forEach(p => porSku[p.sku] = p);
+  let n = 0;
+  ok.forEach(f => {
+    const d = { sku: f.sku, nombre: f.nombre, cat: f.cat, costo: f.costo, precio: f.precio, min: f.min, escalas: f.escalas.length ? f.escalas : null };
+    const ex = porSku[f.sku];
+    if (ex) for (const k in d) upd[`productos/${ex.id}/${k}`] = d[k];
+    else { const id = uid('P') + (n++); upd['productos/' + id] = { id, ...d, stock: f.stock }; }
+  });
+  guardar(upd); closeModal(); render(); toast(`✅ ${ok.length} productos importados`);
 }
 let ENT = null;
 const pFind = v => productos().find(x => v === x.sku + ' · ' + x.nombre) || productos().find(x => x.sku.toLowerCase() === v.toLowerCase());
