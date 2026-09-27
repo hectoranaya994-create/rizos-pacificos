@@ -194,7 +194,7 @@ header.top{flex-wrap:nowrap}
 
 /* ---------- CONFIGURACIÓN ---------- */
 let EMPRESA = 'Rizos Pacíficos';   // se reemplaza con config/empresa (Equipo y ajustes › Empresa)
-function inicialesDe(n) { return String(n || '').trim().split(/\s+/).filter(w => w.length > 2 || /^[A-ZÁÉÍÓÚ]/.test(w)).slice(0, 2).map(w => w[0]).join('').toUpperCase() || 'RP'; }
+function inicialesDe(n) { n = String(n || '').trim(); const cam = n.match(/[A-ZÁÉÍÓÚÑ]/g); if (!/\s/.test(n) && cam && cam.length > 1) return cam.slice(0, 2).join(''); return n.split(/\s+/).filter(w => w.length > 2 || /^[A-ZÁÉÍÓÚ]/.test(w)).slice(0, 2).map(w => w[0]).join('').toUpperCase() || 'RP'; }
 function aplicarMarca(e) {
   e = e || (typeof DB !== 'undefined' && DB.config && DB.config.empresa) || {};
   const nombre = (e.nombre || '').trim() || 'Rizos Pacíficos';

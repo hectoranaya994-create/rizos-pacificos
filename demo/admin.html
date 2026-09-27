@@ -114,7 +114,9 @@ td.n,th.n{text-align:right}
 #print{display:none}
 @media print{
   body>*:not(#print){display:none!important}
+  @page{size:letter portrait;margin:0}
   #print{display:block!important;font-size:12px;color:#000}
+  #print .doc{padding:12mm 14mm}
   #print table{font-size:12px}
   #print th,#print td{padding:5px 6px;white-space:normal}
 }
@@ -182,7 +184,7 @@ td.n,th.n{text-align:right}
 
 /* ---------- CONFIGURACIÓN ---------- */
 let EMPRESA = 'Rizos Pacíficos';   // se reemplaza con config/empresa (Equipo y ajustes › Empresa)
-function inicialesDe(n) { return String(n || '').trim().split(/\s+/).filter(w => w.length > 2 || /^[A-ZÁÉÍÓÚ]/.test(w)).slice(0, 2).map(w => w[0]).join('').toUpperCase() || 'RP'; }
+function inicialesDe(n) { n = String(n || '').trim(); const cam = n.match(/[A-ZÁÉÍÓÚÑ]/g); if (!/\s/.test(n) && cam && cam.length > 1) return cam.slice(0, 2).join(''); return n.split(/\s+/).filter(w => w.length > 2 || /^[A-ZÁÉÍÓÚ]/.test(w)).slice(0, 2).map(w => w[0]).join('').toUpperCase() || 'RP'; }
 function aplicarMarca(e) {
   e = e || (typeof DB !== 'undefined' && DB.config && DB.config.empresa) || {};
   const nombre = (e.nombre || '').trim() || 'Rizos Pacíficos';
@@ -1053,8 +1055,8 @@ function imprimirVenta(id) {
     <table style="width:100%;border:0;margin-bottom:8px"><tr>
       <td style="border:0;vertical-align:top;width:62%">
         <div style="display:flex;align-items:center;gap:10px">
-          ${e.logo ? logoDoc(70) : `<div style="width:58px;height:58px;border-radius:12px;background:#5b2350;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:22px">${esc(logo)}</div>`}
-          <div><div style="font-size:20px;font-weight:800;color:#5b2350;line-height:1.1">${esc(EMPRESA)}</div>${e.lema ? `<div style="font-size:10px;color:#555">${esc(e.lema)}</div>` : ''}</div>
+          ${e.logo ? logoDoc(72) : `<div style="width:64px;height:64px;border-radius:14px;background:#5b2350;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:24px">${esc(logo)}</div>`}
+          <div><div style="font-size:26px;font-weight:800;color:#5b2350;line-height:1.05">${esc(EMPRESA)}</div>${e.lema ? `<div style="font-size:11px;color:#b07d1f;font-weight:700;letter-spacing:.5px;text-transform:uppercase;margin-top:2px">${esc(e.lema)}</div>` : ''}</div>
         </div>
         <div style="margin-top:6px;font-size:11px;line-height:1.4">${e.doc ? esc(e.doc) + '<br>' : ''}${[e.dir, e.tel ? 'Tel. ' + e.tel : ''].filter(Boolean).map(esc).join(' · ')}</div>
       </td>
@@ -1533,7 +1535,7 @@ function vEquipo() {
       <label class="f" style="margin-top:10px">Frase (página de inicio)<input id="cfEL" value="${esc((DB.config.empresa || {}).lema || '')}" placeholder="Distribuidora capilar · Canal TAT Chocó"></label>
       <div class="fg" style="margin-top:10px"><label>NIT o cédula<input id="cfED" value="${esc((DB.config.empresa || {}).doc || '')}" placeholder="Ej: CC 1.077.000.000"></label><label>Teléfono / WhatsApp<input id="cfET" value="${esc((DB.config.empresa || {}).tel || '')}"></label></div>
       <label class="f" style="margin-top:10px">Dirección<input id="cfEA" value="${esc((DB.config.empresa || {}).dir || '')}" placeholder="Ej: Cra 4 # 25-10, Quibdó"></label>
-      <p class="small mut">Aparece en el encabezado, documentos de venta, remisiones, planillas y mensajes de WhatsApp.</p>
+      <p class="small mut">Aparece en el encabezado, documentos de venta, remisiones, planillas y mensajes de WhatsApp. Para el logo usa solo el ícono (cuadrado, sin texto): el nombre ya se escribe al lado.</p>
       <div class="mfoot"><button class="btn" onclick="guardarEmpresa()">Guardar empresa</button></div></div>
     <div class="card"><h3>Datos</h3>
       <p class="small">Modo actual: <b>${MODO === 'local' ? 'Demo local (solo este navegador)' : 'Firebase · en la nube'}</b></p>
