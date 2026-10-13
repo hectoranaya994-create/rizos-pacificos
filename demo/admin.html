@@ -1376,7 +1376,9 @@ function entradaMercancia() {
       <label>Proveedor<input id="enProv" list="dlProv" value="${esc(prov[0] || '')}"><datalist id="dlProv">${prov.map(p => `<option value="${esc(p)}">`).join('')}</datalist></label>
       <label>N° factura proveedor<input id="enFacP"></label>
       <label>Fecha<input id="enFec" type="date" value="${TODAY()}"></label>
+      <label>Flete pagado ($)<input id="enFlete" type="number" min="0" value="" placeholder="0" oninput="enRender()"></label>
     </div>
+    <div class="small mut" style="margin-top:6px">El flete se reparte entre los productos según su valor y queda sumado al costo de cada uno.</div>
     <div class="row" style="margin-top:12px;align-items:flex-end">
       <label class="f grow">Producto<input id="enProd" list="dlProd2" placeholder="Nombre o código…" onchange="const p=pFind(this.value.trim());if(p)$('enCos').value=p.costo"></label>
       <label class="f" style="width:90px">Cant.<input id="enCant" type="number" min="1" value="24"></label>
@@ -1388,6 +1390,12 @@ function entradaMercancia() {
   $('enProd').addEventListener('keydown', e => { if (e.key === 'Enter') enAdd(); });
   enRender();
 }
+// Reparte el flete proporcional al valor de cada línea y devuelve el costo unitario final (costo + flete por unidad)
+function enFlete() { const f = +($('enFlete') && $('enFlete').value) || 0; return f > 0 ? f : 0; }
+function enCostos() {
+  const base = sum(ENT.lineas, l => l.cant * l.costo), f = enFlete(), k = base > 0 ? f / base : 0;
+  return ENT.lineas.map(l => ({ ...l, fleteU: Math.round(l.costo * k), final: Math.round(l.costo * (1 + k)) }));
+}
 function enAdd() {
   const p = pFind($('enProd').value.trim()), cant = parseInt($('enCant').value, 10), costo = +$('enCos').value;
   if (!p) return toast('Selecciona un producto de la lista');
@@ -1395,8 +1403,10 @@ function enAdd() {
   ENT.lineas.push({ pid: p.id, cant, costo }); $('enProd').value = ''; $('enCos').value = ''; $('enProd').focus(); enRender();
 }
 function enRender() {
-  $('enBody').innerHTML = `<div class="tw"><table><thead><tr><th>Producto</th><th class="n">Cant.</th><th class="n">Costo</th><th class="n">Subtotal</th><th></th></tr></thead><tbody>${ENT.lineas.map((l, i) => { const p = P(l.pid); return `<tr><td style="white-space:normal">${esc(p.nombre)}${l.costo !== p.costo ? `<div class="small" style="color:var(--warn)">Costo anterior ${fmt(p.costo)} → margen ${((p.precio - l.costo) / p.precio * 100).toFixed(0)}%</div>` : ''}</td><td class="n">${l.cant}</td><td class="n">${fmt(l.costo)}</td><td class="n">${fmt(l.cant * l.costo)}</td><td><button class="btn sm sec" onclick="ENT.lineas.splice(${i},1);enRender()">✕</button></td></tr>`; }).join('') || '<tr><td colspan="5" class="mut">Agrega los productos de la factura del proveedor.</td></tr>'}</tbody></table></div>
-  <div class="tot big" style="max-width:300px;margin-left:auto"><span>Total compra</span><span>${fmt(sum(ENT.lineas, l => l.cant * l.costo))}</span></div>
+  const LC = enCostos(), flete = enFlete(), base = sum(ENT.lineas, l => l.cant * l.costo);
+  $('enBody').innerHTML = `<div class="tw"><table><thead><tr><th>Producto</th><th class="n">Cant.</th><th class="n">Costo factura</th>${flete ? '<th class="n">+ Flete c/u</th><th class="n">Costo final</th>' : ''}<th class="n">Subtotal</th><th></th></tr></thead><tbody>${LC.map((l, i) => { const p = P(l.pid); return `<tr><td style="white-space:normal">${esc(p.nombre)}${l.final !== p.costo ? `<div class="small" style="color:var(--warn)">Costo anterior ${fmt(p.costo)} → margen ${p.precio ? ((p.precio - l.final) / p.precio * 100).toFixed(0) : 0}%</div>` : ''}</td><td class="n">${l.cant}</td><td class="n">${fmt(l.costo)}</td>${flete ? `<td class="n">${fmt(l.fleteU)}</td><td class="n"><b>${fmt(l.final)}</b></td>` : ''}<td class="n">${fmt(l.cant * l.final)}</td><td><button class="btn sm sec" onclick="ENT.lineas.splice(${i},1);enRender()">✕</button></td></tr>`; }).join('') || `<tr><td colspan="${flete ? 7 : 5}" class="mut">Agrega los productos de la factura del proveedor.</td></tr>`}</tbody></table></div>
+  ${flete ? `<div class="tot" style="max-width:300px;margin-left:auto"><span>Mercancía</span><span>${fmt(base)}</span></div><div class="tot" style="max-width:300px;margin-left:auto"><span>Flete</span><span>${fmt(flete)}</span></div>` : ''}
+  <div class="tot big" style="max-width:300px;margin-left:auto"><span>Total compra</span><span>${fmt(base + flete)}</span></div>
   <div class="mfoot"><button class="btn sec" onclick="closeModal()">Cancelar</button><button class="btn" id="btnEnt" onclick="guardarEntrada()">Guardar entrada</button></div>`;
 }
 async function guardarEntrada() {
@@ -1406,15 +1416,16 @@ async function guardarEntrada() {
   $('btnEnt').disabled = true;
   let n; try { n = await siguiente('com'); } catch (e) { $('btnEnt').disabled = false; return toast(e.message); }
   const id = 'COM-' + pad(n, 4), upd = {}, sube = {};
-  ENT.lineas.forEach(l => { sube[l.pid] = (sube[l.pid] || 0) + l.cant; upd[`productos/${l.pid}/costo`] = l.costo; });
+  const LC = enCostos(), flete = enFlete();
+  LC.forEach(l => { sube[l.pid] = (sube[l.pid] || 0) + l.cant; upd[`productos/${l.pid}/costo`] = l.final; });
   for (const pid in sube) upd[`productos/${pid}/stock`] = P(pid).stock + sube[pid];
-  upd['compras/' + id] = { id, fecha: $('enFec').value || TODAY(), proveedor: prov, facturaProv: $('enFacP').value.trim(), lineas: ENT.lineas, total: sum(ENT.lineas, l => l.cant * l.costo) };
+  upd['compras/' + id] = { id, fecha: $('enFec').value || TODAY(), proveedor: prov, facturaProv: $('enFacP').value.trim(), lineas: LC.map(l => ({ pid: l.pid, cant: l.cant, costo: l.final, costoFactura: l.costo })), flete, total: sum(LC, l => l.cant * l.costo) + flete };
   const provs = DB.config.proveedores || []; if (!provs.includes(prov)) upd['config/proveedores'] = [...provs, prov];
   guardar(upd); closeModal(); render(); toast('Entrada ' + id + ' registrada · stock actualizado');
 }
 function historialCompras() {
   const cs = vals(DB.compras).sort((a, b) => b.fecha.localeCompare(a.fecha));
-  openModal('Historial de compras', `<div class="tw"><table><thead><tr><th>Compra</th><th>Fecha</th><th>Proveedor</th><th>Productos</th><th class="n">Total</th></tr></thead><tbody>${cs.map(c => `<tr><td>${c.id}${c.facturaProv ? '<div class="small mut">Fact. ' + esc(c.facturaProv) + '</div>' : ''}</td><td>${fFecha(c.fecha)}</td><td>${esc(c.proveedor)}</td><td class="small" style="white-space:normal">${(c.lineas || []).map(l => l.cant + ' × ' + esc(P(l.pid) ? P(l.pid).nombre : l.pid)).join('<br>')}</td><td class="n">${fmt(c.total)}</td></tr>`).join('') || '<tr><td colspan="5" class="mut">Sin compras.</td></tr>'}</tbody></table></div>`, true);
+  openModal('Historial de compras', `<div class="tw"><table><thead><tr><th>Compra</th><th>Fecha</th><th>Proveedor</th><th>Productos</th><th class="n">Total</th></tr></thead><tbody>${cs.map(c => `<tr><td>${c.id}${c.facturaProv ? '<div class="small mut">Fact. ' + esc(c.facturaProv) + '</div>' : ''}</td><td>${fFecha(c.fecha)}</td><td>${esc(c.proveedor)}</td><td class="small" style="white-space:normal">${(c.lineas || []).map(l => l.cant + ' × ' + esc(P(l.pid) ? P(l.pid).nombre : l.pid)).join('<br>')}</td><td class="n">${fmt(c.total)}${c.flete ? '<div class="small mut">incl. flete ' + fmt(c.flete) + '</div>' : ''}</td></tr>`).join('') || '<tr><td colspan="5" class="mut">Sin compras.</td></tr>'}</tbody></table></div>`, true);
 }
 
 /* ---------- CARTERA ---------- */
