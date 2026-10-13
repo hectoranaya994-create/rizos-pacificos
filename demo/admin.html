@@ -168,6 +168,7 @@ td.n,th.n{text-align:right}
   <button data-v="rutas" onclick="go('rutas')">🗺️ Rutas</button>
   <button data-v="inventario" onclick="go('inventario')">📦 Inventario<span class="bdg" id="bdgInv"></span></button>
   <button data-v="cartera" onclick="go('cartera')">💰 Cartera<span class="bdg" id="bdgCar"></span></button>
+  <button data-v="finanzas" onclick="go('finanzas')">💵 Finanzas<span class="bdg" id="bdgFin"></span></button>
   <button data-v="equipo" onclick="go('equipo')">👥 Equipo y ajustes</button>
 </nav>
 <main id="app"></main>
@@ -752,7 +753,8 @@ function render() {
   $('bdgDes').textContent = pedidos().filter(o => o.estado === 'facturado').length || '';
   $('bdgInv').textContent = productos().filter(p => p.stock <= p.min).length || '';
   $('bdgCar').textContent = (vals(DB.liquidaciones).filter(l => l.estado === 'pendiente').length + sum(pedidos(), o => abonos(o).filter(a => !a.confirmado && !a.liqId).length)) || '';
-  ({ inicio: vInicio, aprobar: vAprobar, pedidos: vPedidos, clientes: vClientes, rutas: vRutas, prospectos: vProspectos, inventario: vInventario, cartera: vCartera, equipo: vEquipo })[VIEW]();
+  $('bdgFin').textContent = vals(DB.compras).filter(c => { const k = compraInfo(c); return (k.saldoProv + k.saldoFlete) > 0 && k.vence <= TODAY(); }).length || '';
+  ({ inicio: vInicio, aprobar: vAprobar, pedidos: vPedidos, clientes: vClientes, rutas: vRutas, prospectos: vProspectos, inventario: vInventario, cartera: vCartera, finanzas: vFinanzas, equipo: vEquipo })[VIEW]();
 }
 
 /* ---------- LOGIN ---------- */
@@ -905,7 +907,7 @@ async function facturar() {
   const ajustes = REV.lineas.filter(l => l.cant !== l.pedido).map(l => `${P(l.pid).nombre}: ${l.pedido}→${l.cant}`).join('; ');
   const upd = {
     [`pedidos/${o.id}/estado`]: 'facturado',
-    [`pedidos/${o.id}/lineas`]: lineas.map(l => ({ pid: l.pid, cant: l.cant, precio: l.precio })),
+    [`pedidos/${o.id}/lineas`]: lineas.map(l => ({ pid: l.pid, cant: l.cant, precio: l.precio, costo: P(l.pid) ? P(l.pid).costo : 0 })),
     [`pedidos/${o.id}/desc`]: REV.desc, [`pedidos/${o.id}/pago`]: REV.pago,
     [`pedidos/${o.id}/total`]: calcTotal(lineas, REV.desc),
     [`pedidos/${o.id}/vence`]: REV.pago === 'credito' ? addDays(T, c.plazo) : T,
@@ -1379,6 +1381,16 @@ function entradaMercancia() {
       <label>Flete pagado ($)<input id="enFlete" type="number" min="0" value="" placeholder="0" oninput="enRender()"></label>
     </div>
     <div class="small mut" style="margin-top:6px">El flete se reparte entre los productos según su valor y queda sumado al costo de cada uno.</div>
+    <div class="fg" style="margin-top:10px">
+      <label>Condición de pago<select id="enCond" onchange="enPagoUI()"><option value="contado">Contado (se paga ya)</option><option value="credito">Crédito</option></select></label>
+      <label id="enPlazoL" style="display:none">Plazo (días)<input id="enPlazo" type="number" min="1" value="30"></label>
+      <label id="enCtaL">Pagar desde<select id="enCta">${cuentas().map(c => `<option>${esc(c)}</option>`).join('')}</select></label>
+    </div>
+    <div class="fg" id="enFleteOpc" style="margin-top:10px;display:none">
+      <label>¿Quién cobra el flete?<select id="enFMod" onchange="enPagoUI()"><option value="transportadora">Transportadora (aparte)</option><option value="proveedor">Viene en la factura del proveedor</option></select></label>
+      <label id="enTrL">Transportadora<input id="enTr" placeholder="Ej: Coordinadora, Envía…"></label>
+      <label id="enFPagL">Flete<select id="enFPag" onchange="enPagoUI()"><option value="ya">Pagado ahora (sale de la cuenta)</option><option value="pend">Queda por pagar</option></select></label>
+    </div>
     <div class="row" style="margin-top:12px;align-items:flex-end">
       <label class="f grow">Producto<input id="enProd" list="dlProd2" placeholder="Nombre o código…" onchange="const p=pFind(this.value.trim());if(p)$('enCos').value=p.costo"></label>
       <label class="f" style="width:90px">Cant.<input id="enCant" type="number" min="1" value="24"></label>
@@ -1391,6 +1403,14 @@ function entradaMercancia() {
   enRender();
 }
 // Reparte el flete proporcional al valor de cada línea y devuelve el costo unitario final (costo + flete por unidad)
+function enPagoUI() {
+  const cr = $('enCond') && $('enCond').value === 'credito', fl = enFlete() > 0, tr = $('enFMod') && $('enFMod').value === 'transportadora';
+  if ($('enPlazoL')) $('enPlazoL').style.display = cr ? '' : 'none';
+  if ($('enFleteOpc')) $('enFleteOpc').style.display = fl ? '' : 'none';
+  if ($('enTrL')) $('enTrL').style.display = tr ? '' : 'none';
+  if ($('enFPagL')) $('enFPagL').style.display = tr ? '' : 'none';
+  if ($('enCtaL')) $('enCtaL').style.display = !cr || (fl && tr && $('enFPag').value === 'ya') ? '' : 'none';
+}
 function enFlete() { const f = +($('enFlete') && $('enFlete').value) || 0; return f > 0 ? f : 0; }
 function enCostos() {
   const base = sum(ENT.lineas, l => l.cant * l.costo), f = enFlete(), k = base > 0 ? f / base : 0;
@@ -1404,6 +1424,7 @@ function enAdd() {
 }
 function enRender() {
   const LC = enCostos(), flete = enFlete(), base = sum(ENT.lineas, l => l.cant * l.costo);
+  enPagoUI();
   $('enBody').innerHTML = `<div class="tw"><table><thead><tr><th>Producto</th><th class="n">Cant.</th><th class="n">Costo factura</th>${flete ? '<th class="n">+ Flete c/u</th><th class="n">Costo final</th>' : ''}<th class="n">Subtotal</th><th></th></tr></thead><tbody>${LC.map((l, i) => { const p = P(l.pid); return `<tr><td style="white-space:normal">${esc(p.nombre)}${l.final !== p.costo ? `<div class="small" style="color:var(--warn)">Costo anterior ${fmt(p.costo)} → margen ${p.precio ? ((p.precio - l.final) / p.precio * 100).toFixed(0) : 0}%</div>` : ''}</td><td class="n">${l.cant}</td><td class="n">${fmt(l.costo)}</td>${flete ? `<td class="n">${fmt(l.fleteU)}</td><td class="n"><b>${fmt(l.final)}</b></td>` : ''}<td class="n">${fmt(l.cant * l.final)}</td><td><button class="btn sm sec" onclick="ENT.lineas.splice(${i},1);enRender()">✕</button></td></tr>`; }).join('') || `<tr><td colspan="${flete ? 7 : 5}" class="mut">Agrega los productos de la factura del proveedor.</td></tr>`}</tbody></table></div>
   ${flete ? `<div class="tot" style="max-width:300px;margin-left:auto"><span>Mercancía</span><span>${fmt(base)}</span></div><div class="tot" style="max-width:300px;margin-left:auto"><span>Flete</span><span>${fmt(flete)}</span></div>` : ''}
   <div class="tot big" style="max-width:300px;margin-left:auto"><span>Total compra</span><span>${fmt(base + flete)}</span></div>
@@ -1418,14 +1439,234 @@ async function guardarEntrada() {
   const id = 'COM-' + pad(n, 4), upd = {}, sube = {};
   const LC = enCostos(), flete = enFlete();
   LC.forEach(l => { sube[l.pid] = (sube[l.pid] || 0) + l.cant; upd[`productos/${l.pid}/costo`] = l.final; });
+  // Pago: contado sale de caja ya; crédito queda en cuentas por pagar. El flete a transportadora es un pago aparte.
+  const fec = $('enFec').value || TODAY(), cond = $('enCond').value, plazo = Math.max(1, parseInt($('enPlazo').value, 10) || 30), cta = $('enCta').value;
+  const fMod = flete ? $('enFMod').value : null, trans = flete && fMod === 'transportadora' ? ($('enTr').value.trim() || 'Transportadora') : null;
+  const merc = sum(LC, l => l.cant * l.costo), aProv = merc + (fMod === 'proveedor' ? flete : 0), fYa = flete && fMod === 'transportadora' && $('enFPag').value === 'ya';
+  const sale = (cond === 'contado' ? aProv : 0) + (fYa ? flete : 0);
+  if (sale > 0 && saldoCuenta(cta) < sale && !confirm(`La cuenta ${cta} tiene ${fmt(saldoCuenta(cta))} y este pago es de ${fmt(sale)}. ¿Registrar igual? (quedará en negativo)`)) { $('btnEnt').disabled = false; return; }
+  if (cond === 'contado') { const mid = uid('M'); upd['movimientos/' + mid] = { id: mid, tipo: 'pago_prov', fecha: fec, ts: Date.now(), cuenta: cta, valor: aProv, compraId: id, tercero: prov, desc: 'Pago de contado ' + id + ($('enFacP').value.trim() ? ' · fact. ' + $('enFacP').value.trim() : '') }; }
+  if (fYa) { const mid = uid('M'); upd['movimientos/' + mid] = { id: mid, tipo: 'pago_flete', fecha: fec, ts: Date.now() + 1, cuenta: cta, valor: flete, compraId: id, tercero: trans, desc: 'Flete ' + id + ' · ' + trans }; }
   for (const pid in sube) upd[`productos/${pid}/stock`] = P(pid).stock + sube[pid];
-  upd['compras/' + id] = { id, fecha: $('enFec').value || TODAY(), proveedor: prov, facturaProv: $('enFacP').value.trim(), lineas: LC.map(l => ({ pid: l.pid, cant: l.cant, costo: l.final, costoFactura: l.costo })), flete, total: sum(LC, l => l.cant * l.costo) + flete };
+  upd['compras/' + id] = { id, fecha: $('enFec').value || TODAY(), proveedor: prov, facturaProv: $('enFacP').value.trim(), lineas: LC.map(l => ({ pid: l.pid, cant: l.cant, costo: l.final, costoFactura: l.costo })), flete, total: sum(LC, l => l.cant * l.costo) + flete, condicion: cond, plazo: cond === 'credito' ? plazo : 0, vence: cond === 'credito' ? addDays(fec, plazo) : fec, fleteModo: fMod, transportadora: trans };
   const provs = DB.config.proveedores || []; if (!provs.includes(prov)) upd['config/proveedores'] = [...provs, prov];
   guardar(upd); closeModal(); render(); toast('Entrada ' + id + ' registrada · stock actualizado');
 }
 function historialCompras() {
   const cs = vals(DB.compras).sort((a, b) => b.fecha.localeCompare(a.fecha));
-  openModal('Historial de compras', `<div class="tw"><table><thead><tr><th>Compra</th><th>Fecha</th><th>Proveedor</th><th>Productos</th><th class="n">Total</th></tr></thead><tbody>${cs.map(c => `<tr><td>${c.id}${c.facturaProv ? '<div class="small mut">Fact. ' + esc(c.facturaProv) + '</div>' : ''}</td><td>${fFecha(c.fecha)}</td><td>${esc(c.proveedor)}</td><td class="small" style="white-space:normal">${(c.lineas || []).map(l => l.cant + ' × ' + esc(P(l.pid) ? P(l.pid).nombre : l.pid)).join('<br>')}</td><td class="n">${fmt(c.total)}${c.flete ? '<div class="small mut">incl. flete ' + fmt(c.flete) + '</div>' : ''}</td></tr>`).join('') || '<tr><td colspan="5" class="mut">Sin compras.</td></tr>'}</tbody></table></div>`, true);
+  openModal('Historial de compras', `<div class="tw"><table><thead><tr><th>Compra</th><th>Fecha</th><th>Proveedor</th><th>Productos</th><th class="n">Total</th></tr></thead><tbody>${cs.map(c => `<tr><td>${c.id}${c.facturaProv ? '<div class="small mut">Fact. ' + esc(c.facturaProv) + '</div>' : ''}</td><td>${fFecha(c.fecha)}</td><td>${esc(c.proveedor)}</td><td class="small" style="white-space:normal">${(c.lineas || []).map(l => l.cant + ' × ' + esc(P(l.pid) ? P(l.pid).nombre : l.pid)).join('<br>')}</td><td class="n">${fmt(c.total)}${c.flete ? '<div class="small mut">incl. flete ' + fmt(c.flete) + '</div>' : ''}${(() => { const k = compraInfo(c), s = k.saldoProv + k.saldoFlete; return s > 0 ? `<div class="small" style="color:var(--bad)">Debe ${fmt(s)}</div>` : '<div class="small" style="color:var(--ok)">Pagada</div>'; })()}</td></tr>`).join('') || '<tr><td colspan="5" class="mut">Sin compras.</td></tr>'}</tbody></table></div>`, true);
+}
+
+/* ---------- FINANZAS: CAJA, CUENTAS POR PAGAR, GASTOS Y RESULTADOS ---------- */
+// Contabilidad gerencial (no es contabilidad para la DIAN).
+// El dinero se calcula con:
+//  · movimientos/{id} registrados a mano: aportes, gastos, pagos a proveedores y transportadoras, traslados, retiros
+//  · ingresos automáticos: abonos confirmados de cartera, ventas de contado entregadas y faltantes/sobrantes de liquidaciones
+// El flete de COMPRA ya va en el costo del producto: NO es gasto. Su pago sí sale de caja (pago_flete).
+const CUENTAS_DEF = ['Efectivo', 'Nequi', 'Daviplata', 'Banco'];
+const cuentas = () => (DB.config && DB.config.cuentas && DB.config.cuentas.length ? DB.config.cuentas : CUENTAS_DEF);
+const cuentaDeMedio = m => { const cs = cuentas(); if (m === 'Transferencia') return cs.includes('Banco') ? 'Banco' : cs[0]; return cs.includes(m) ? m : cs[0]; };
+const CAT_GASTO = ['Arriendo', 'Sueldo del dueño', 'Comisiones vendedores', 'Servicios (luz, agua, internet)', 'Transporte y despachos a clientes', 'Empaques y papelería', 'Mantenimiento', 'Impuestos y trámites', 'Otros gastos'];
+const TIPO_MOV = {
+  aporte: ['ok', 'Aporte de capital', 1], ingreso: ['ok', 'Otro ingreso', 1], recaudo: ['ok', 'Recaudo cartera', 1], venta_contado: ['ok', 'Venta de contado', 1],
+  gasto: ['bad', 'Gasto', -1], pago_prov: ['warn', 'Pago a proveedor', -1], pago_flete: ['warn', 'Pago de flete', -1], retiro: ['bad', 'Retiro del dueño', -1],
+  faltante: ['bad', 'Liquidación', 1], traslado: ['info', 'Traslado', 0]
+};
+const movs = () => vals(DB.movimientos);
+const tsDe = f => Date.parse(f + 'T12:00:00');
+
+// Estado de pago de una compra. Compras viejas (sin condición) quedan por pagar desde su fecha.
+function compraInfo(c) {
+  const merc = sum(c.lineas || [], l => l.cant * (l.costoFactura != null ? l.costoFactura : l.costo));
+  const flete = +c.flete || 0, modo = flete ? (c.fleteModo || 'transportadora') : null;
+  const totalProv = merc + (modo === 'proveedor' ? flete : 0), totalFlete = modo === 'transportadora' ? flete : 0;
+  const pag = t => sum(movs().filter(m => m.tipo === t && m.compraId === c.id), m => m.valor);
+  const pagadoProv = pag('pago_prov'), pagadoFlete = pag('pago_flete');
+  return { merc, flete, modo, totalProv, totalFlete, pagadoProv, pagadoFlete, saldoProv: Math.max(0, totalProv - pagadoProv), saldoFlete: Math.max(0, totalFlete - pagadoFlete), vence: c.vence || c.fecha, condicion: c.condicion || 'sin dato' };
+}
+
+// Todos los movimientos de dinero (manuales + automáticos), en orden cronológico, con signo.
+function movimientosCaja() {
+  const out = [];
+  movs().forEach(m => {
+    if (m.tipo === 'traslado') {
+      out.push({ ...m, monto: -m.valor, txt: 'Traslado a ' + m.destino + (m.desc ? ' · ' + m.desc : '') });
+      out.push({ ...m, id: m.id + 'd', cuenta: m.destino, monto: m.valor, txt: 'Traslado desde ' + m.cuenta + (m.desc ? ' · ' + m.desc : ''), espejo: true });
+      return;
+    }
+    const t = TIPO_MOV[m.tipo] || ['mut', m.tipo, 0];
+    out.push({ ...m, monto: t[2] * m.valor, txt: (m.tipo === 'gasto' ? m.categoria + (m.desc ? ' · ' + m.desc : '') : m.desc || t[1]) });
+  });
+  pedidos().forEach(o => {
+    if (o.estado === 'anulado') return;
+    const cli = C(o.clienteId) ? C(o.clienteId).nombre : '', num = o.factura ? o.factura.num : o.id;
+    abonos(o).filter(a => a.confirmado).forEach(a => out.push({ id: o.id + '_' + a.id, tipo: 'recaudo', fecha: a.fecha, ts: a.confirmadoTs || a.ts || tsDe(a.fecha), cuenta: cuentaDeMedio(a.medio), monto: a.valor, txt: 'Recaudo ' + num + ' · ' + cli + ' (' + a.medio + ')', auto: true }));
+    if (o.pago === 'contado' && o.estado === 'entregado') out.push({ id: o.id + '_C', tipo: 'venta_contado', fecha: o.entregadoTs ? iso(new Date(o.entregadoTs)) : o.fecha, ts: o.entregadoTs || o.ts, cuenta: cuentaDeMedio('Efectivo'), monto: o.total, txt: 'Venta de contado ' + num + ' · ' + cli, auto: true });
+  });
+  vals(DB.liquidaciones).filter(l => l.estado === 'recibida' && l.diferencia).forEach(l => out.push({ id: 'LQ' + l.id, tipo: 'faltante', fecha: iso(new Date(l.recibidaTs || l.ts)), ts: l.recibidaTs || l.ts, cuenta: cuentaDeMedio('Efectivo'), monto: -l.diferencia, txt: (l.diferencia > 0 ? 'Faltante' : 'Sobrante') + ' en liquidación de ' + V(l.vendedorId).nombre, auto: true }));
+  return out.sort((a, b) => a.fecha.localeCompare(b.fecha) || (a.ts || 0) - (b.ts || 0));
+}
+function saldosCuentas() { const s = {}; cuentas().forEach(c => s[c] = 0); movimientosCaja().forEach(m => s[m.cuenta] = (s[m.cuenta] || 0) + m.monto); return s; }
+const saldoCuenta = c => saldosCuentas()[c] || 0;
+
+// Estado de resultados de un mes (ventas facturadas − costo de lo vendido − gastos)
+function resultadosMes(mes) {
+  const ps = pedidos().filter(o => VALIDOS.includes(o.estado) && o.fecha.startsWith(mes));
+  const ventas = sum(ps, o => o.total);
+  const costo = sum(ps, o => sum(lineasDe(o), l => l.cant * (l.costo != null ? l.costo : (P(l.pid) ? P(l.pid).costo : 0))));
+  const gastos = movs().filter(m => m.tipo === 'gasto' && m.fecha.startsWith(mes)), porCat = {};
+  gastos.forEach(m => porCat[m.categoria] = (porCat[m.categoria] || 0) + m.valor);
+  const totGastos = sum(gastos, m => m.valor), bruta = ventas - costo;
+  const compras = sum(vals(DB.compras).filter(c => c.fecha.startsWith(mes)), c => c.total);
+  const comis = sum(vendedores(), v => comisionVendedor(v.id, mes).comision);
+  return { ventas, costo, bruta, porCat, totGastos, neta: bruta - totGastos, n: ps.length, compras, comis };
+}
+
+const FN = { tab: 'resumen', mes: TODAY().slice(0, 7), cta: '', pagadas: false };
+function vFinanzas() {
+  const T = TODAY(), sal = saldosCuentas(), caja = sum(Object.values(sal));
+  const cs = vals(DB.compras).map(c => ({ c, k: compraInfo(c) }));
+  const debeProv = sum(cs, x => x.k.saldoProv), debeFlete = sum(cs, x => x.k.saldoFlete);
+  const vencido = sum(cs.filter(x => x.k.vence < T), x => x.k.saldoProv + x.k.saldoFlete);
+  const porCobrar = sum(pedidos(), saldoPedido), inv = sum(productos(), p => p.stock * p.costo);
+  const hayAporte = movs().some(m => m.tipo === 'aporte');
+  const tabs = [['resumen', 'Resumen'], ['pagar', 'Cuentas por pagar'], ['movs', 'Movimientos de caja'], ['resultados', 'Utilidad del mes']];
+  $('app').innerHTML = `
+  <div class="row between"><h2>Finanzas</h2><div class="row">
+    <button class="btn bad" onclick="formMov('gasto')">− Registrar gasto</button>
+    <button class="btn sec" onclick="formMov('traslado')">⇄ Traslado</button>
+    <button class="btn sec" onclick="formMov('aporte')">+ Aporte / ingreso</button>
+    <button class="btn sec" onclick="formMov('retiro')">Retiro del dueño</button></div></div>
+  ${hayAporte ? '' : `<div class="alert warn" style="display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap"><span><b>Empieza registrando el saldo inicial</b> (el capital con el que arranca el negocio). Desde ahí se descuentan pagos y gastos.</span><button class="btn" onclick="formMov('aporte')">Registrar saldo inicial</button></div>`}
+  <div class="kpis">
+    <div class="kpi"><div class="l">Dinero disponible</div><div class="v" style="color:${caja < 0 ? 'var(--bad)' : 'var(--ok)'}">${fmt(caja)}</div><div class="s">${Object.entries(sal).filter(([, v]) => v).map(([c, v]) => esc(c) + ' ' + fmt(v)).join(' · ') || 'Sin movimientos'}</div></div>
+    <div class="kpi" style="cursor:pointer" onclick="FN.tab='pagar';vFinanzas()"><div class="l">Por pagar</div><div class="v" style="color:var(--bad)">${fmt(debeProv + debeFlete)}</div><div class="s">Proveedores ${fmt(debeProv)} · Fletes ${fmt(debeFlete)}${vencido ? ` · <b style="color:var(--bad)">vencido ${fmt(vencido)}</b>` : ''}</div></div>
+    <div class="kpi" style="cursor:pointer" onclick="go('cartera')"><div class="l">Por cobrar</div><div class="v">${fmt(porCobrar)}</div><div class="s">Cartera de clientes</div></div>
+    <div class="kpi"><div class="l">Inventario al costo</div><div class="v">${fmt(inv)}</div><div class="s">Mercancía en bodega</div></div>
+    <div class="kpi"><div class="l">Posición neta</div><div class="v">${fmt(caja + inv + porCobrar - debeProv - debeFlete)}</div><div class="s">Dinero + inventario + por cobrar − por pagar</div></div>
+  </div>
+  <div class="tabs2">${tabs.map(([k, t]) => `<button class="${FN.tab === k ? 'on' : ''}" onclick="FN.tab='${k}';vFinanzas()">${t}</button>`).join('')}</div>
+  <div id="finBody"></div>`;
+  ({ resumen: finResumen, pagar: finPagar, movs: finMovs, resultados: finResultados })[FN.tab](sal, cs);
+}
+function finResumen(sal, cs) {
+  const T = TODAY(), prox = cs.filter(x => x.k.saldoProv + x.k.saldoFlete > 0).sort((a, b) => a.k.vence.localeCompare(b.k.vence)).slice(0, 8);
+  const ult = movimientosCaja().slice(-8).reverse(), r = resultadosMes(T.slice(0, 7));
+  $('finBody').innerHTML = `<div class="grid2">
+    <div class="card"><h3>Dinero por cuenta</h3><div class="tw"><table><tbody>${Object.entries(sal).map(([c, v]) => `<tr class="clk" onclick="FN.tab='movs';FN.cta='${esc(c)}';vFinanzas()"><td>${esc(c)}</td><td class="n" style="color:${v < 0 ? 'var(--bad)' : 'inherit'}"><b>${fmt(v)}</b></td></tr>`).join('')}<tr><td><b>Total</b></td><td class="n"><b>${fmt(sum(Object.values(sal)))}</b></td></tr></tbody></table></div></div>
+    <div class="card"><h3>Este mes</h3><div class="tw"><table><tbody>
+      <tr><td>Ventas facturadas</td><td class="n">${fmt(r.ventas)}</td></tr>
+      <tr><td>Costo de lo vendido</td><td class="n">− ${fmt(r.costo)}</td></tr>
+      <tr><td><b>Utilidad bruta</b></td><td class="n"><b>${fmt(r.bruta)}</b></td></tr>
+      <tr><td>Gastos</td><td class="n">− ${fmt(r.totGastos)}</td></tr>
+      <tr><td><b>Utilidad neta</b></td><td class="n"><b style="color:${r.neta < 0 ? 'var(--bad)' : 'var(--ok)'}">${fmt(r.neta)}</b></td></tr></tbody></table></div>
+      <div class="mfoot"><button class="btn sm sec" onclick="FN.tab='resultados';vFinanzas()">Ver detalle</button></div></div>
+    <div class="card"><h3>Próximos pagos</h3>${prox.length ? `<div class="list">${prox.map(({ c, k }) => { const d = diasEntre(T, k.vence); return `<div class="it"><span class="b ${d < 0 ? 'bad' : d <= 3 ? 'warn' : 'info'}">${d < 0 ? 'Vencida ' + (-d) + 'd' : d === 0 ? 'Hoy' : 'En ' + d + 'd'}</span><div class="x"><b>${esc(c.proveedor)} · ${fmt(k.saldoProv + k.saldoFlete)}</b><span class="small mut">${c.id}${c.facturaProv ? ' · fact. ' + esc(c.facturaProv) : ''}${k.saldoFlete ? ' · flete ' + fmt(k.saldoFlete) : ''}</span></div>${k.saldoProv ? `<button class="btn sm" onclick="pagarCompra('${c.id}','prov')">Pagar</button>` : ''}${k.saldoFlete ? `<button class="btn sm sec" onclick="pagarCompra('${c.id}','flete')">Pagar flete</button>` : ''}</div>`; }).join('')}</div>` : '<p class="mut">No debes nada a proveedores ✓</p>'}</div>
+    <div class="card"><h3>Últimos movimientos</h3>${ult.length ? `<div class="list">${ult.map(m => `<div class="it"><span class="b ${(TIPO_MOV[m.tipo] || ['mut'])[0]}">${fFecha(m.fecha)}</span><div class="x"><b style="color:${m.monto < 0 ? 'var(--bad)' : 'var(--ok)'}">${m.monto < 0 ? '−' : '+'} ${fmt(Math.abs(m.monto))}</b><span class="small mut">${esc(m.txt)} · ${esc(m.cuenta)}</span></div></div>`).join('')}</div>` : '<p class="mut">Sin movimientos todavía.</p>'}</div>
+  </div>`;
+}
+function finPagar(sal, cs) {
+  const T = TODAY(), pend = cs.filter(x => x.k.saldoProv + x.k.saldoFlete > 0).sort((a, b) => a.k.vence.localeCompare(b.k.vence));
+  const pag = cs.filter(x => x.k.saldoProv + x.k.saldoFlete === 0).sort((a, b) => b.c.fecha.localeCompare(a.c.fecha)).slice(0, 30);
+  const porProv = {}; pend.forEach(x => { porProv[x.c.proveedor] = (porProv[x.c.proveedor] || 0) + x.k.saldoProv; if (x.k.saldoFlete) { const t = x.c.transportadora || 'Transportadora'; porProv[t + ' (flete)'] = (porProv[t + ' (flete)'] || 0) + x.k.saldoFlete; } });
+  $('finBody').innerHTML = `
+  ${Object.keys(porProv).length ? `<div class="row" style="gap:6px;margin-bottom:10px;flex-wrap:wrap">${Object.entries(porProv).filter(([, v]) => v).sort((a, b) => b[1] - a[1]).map(([p, v]) => `<span class="b info">${esc(p)}: ${fmt(v)}</span>`).join('')}</div>` : ''}
+  <div class="tw"><table><thead><tr><th>Compra</th><th>Proveedor</th><th>Condición</th><th>Vence</th><th class="n">Total</th><th class="n">Pagado</th><th class="n">Saldo</th><th></th></tr></thead><tbody>
+  ${pend.map(({ c, k }) => { const d = diasEntre(T, k.vence); return `<tr><td>${c.id}<div class="small mut">${fFecha(c.fecha)}${c.facturaProv ? ' · fact. ' + esc(c.facturaProv) : ''}</div></td><td>${esc(c.proveedor)}${k.totalFlete ? `<div class="small mut">Flete: ${esc(c.transportadora || 'transportadora')}</div>` : ''}</td><td>${k.condicion === 'credito' ? 'Crédito ' + c.plazo + 'd' : k.condicion === 'contado' ? 'Contado' : '—'}</td><td><span class="b ${d < 0 ? 'bad' : d <= 3 ? 'warn' : 'info'}">${fFecha(k.vence)}</span><div class="small mut">${d < 0 ? 'vencida hace ' + (-d) + 'd' : d === 0 ? 'vence hoy' : 'en ' + d + 'd'}</div></td><td class="n">${fmt(k.totalProv + k.totalFlete)}</td><td class="n">${fmt(k.pagadoProv + k.pagadoFlete)}</td><td class="n"><b style="color:var(--bad)">${fmt(k.saldoProv + k.saldoFlete)}</b>${k.saldoFlete ? `<div class="small mut">flete ${fmt(k.saldoFlete)}</div>` : ''}</td><td style="white-space:nowrap">${k.saldoProv ? `<button class="btn sm" onclick="pagarCompra('${c.id}','prov')">Pagar</button> ` : ''}${k.saldoFlete ? `<button class="btn sm sec" onclick="pagarCompra('${c.id}','flete')">Flete</button>` : ''}</td></tr>`; }).join('') || '<tr><td colspan="8" class="mut">No hay cuentas por pagar ✓</td></tr>'}
+  </tbody></table></div>
+  <details class="card" style="margin-top:12px" ${FN.pagadas ? 'open' : ''} ontoggle="FN.pagadas=this.open"><summary style="cursor:pointer;font-weight:700">Compras pagadas (${pag.length})</summary>
+  <div class="tw" style="margin-top:10px"><table><thead><tr><th>Compra</th><th>Fecha</th><th>Proveedor</th><th class="n">Total</th><th>Pagos</th></tr></thead><tbody>${pag.map(({ c, k }) => `<tr><td>${c.id}</td><td>${fFecha(c.fecha)}</td><td>${esc(c.proveedor)}</td><td class="n">${fmt(k.totalProv + k.totalFlete)}</td><td class="small">${movs().filter(m => m.compraId === c.id).sort((a, b) => a.fecha.localeCompare(b.fecha)).map(m => fFecha(m.fecha) + ' ' + fmt(m.valor) + ' (' + esc(m.cuenta) + ')').join('<br>')}</td></tr>`).join('') || '<tr><td colspan="5" class="mut">—</td></tr>'}</tbody></table></div></details>`;
+}
+function finMovs() {
+  const todos = movimientosCaja(), corr = {}; let tot = 0;
+  todos.forEach(m => { tot += m.monto; corr[m.id] = tot; });
+  const rows = todos.filter(m => m.fecha.startsWith(FN.mes) && (!FN.cta || m.cuenta === FN.cta));
+  let sc = 0; const corrCta = {}; if (FN.cta) todos.filter(m => m.cuenta === FN.cta).forEach(m => { sc += m.monto; corrCta[m.id] = sc; });
+  const ent = sum(rows.filter(m => m.monto > 0), m => m.monto), sal = sum(rows.filter(m => m.monto < 0), m => -m.monto);
+  $('finBody').innerHTML = `
+  <div class="row" style="gap:8px;margin-bottom:10px;flex-wrap:wrap">
+    <label class="f">Mes<input type="month" value="${FN.mes}" onchange="FN.mes=this.value||TODAY().slice(0,7);vFinanzas()"></label>
+    <label class="f">Cuenta<select onchange="FN.cta=this.value;vFinanzas()"><option value="">Todas</option>${cuentas().map(c => `<option ${FN.cta === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select></label>
+    <span class="b ok">Entradas ${fmt(ent)}</span><span class="b bad">Salidas ${fmt(sal)}</span><span class="b info">Neto ${fmt(ent - sal)}</span>
+  </div>
+  <div class="tw"><table><thead><tr><th>Fecha</th><th>Tipo</th><th>Detalle</th><th>Cuenta</th><th class="n">Entrada</th><th class="n">Salida</th><th class="n">Saldo ${FN.cta ? esc(FN.cta) : 'total'}</th><th></th></tr></thead><tbody>
+  ${rows.slice().reverse().map(m => `<tr><td>${fFecha(m.fecha)}</td><td><span class="b ${(TIPO_MOV[m.tipo] || ['mut'])[0]}">${(TIPO_MOV[m.tipo] || ['', m.tipo])[1]}</span></td><td style="white-space:normal">${esc(m.txt)}${m.ref ? `<div class="small mut">Ref. ${esc(m.ref)}</div>` : ''}</td><td>${esc(m.cuenta)}</td><td class="n" style="color:var(--ok)">${m.monto > 0 ? fmt(m.monto) : ''}</td><td class="n" style="color:var(--bad)">${m.monto < 0 ? fmt(-m.monto) : ''}</td><td class="n">${fmt(FN.cta ? corrCta[m.id] : corr[m.id])}</td><td>${m.auto || m.espejo ? '<span class="small mut">auto</span>' : `<button class="btn sm sec" title="Borrar" onclick="borrarMov('${m.id}')">✕</button>`}</td></tr>`).join('') || '<tr><td colspan="8" class="mut">Sin movimientos en este mes.</td></tr>'}
+  </tbody></table></div>
+  <p class="small mut" style="margin-top:8px">Los recaudos de cartera, ventas de contado entregadas y faltantes de liquidación entran solos (marcados "auto"). Las ventas de contado se cuentan en ${esc(cuentaDeMedio('Efectivo'))} al marcarlas como entregadas.</p>`;
+}
+function finResultados() {
+  const r = resultadosMes(FN.mes), cats = Object.entries(r.porCat).sort((a, b) => b[1] - a[1]);
+  const pct = v => r.ventas ? ' <span class="small mut">(' + (v / r.ventas * 100).toFixed(1) + '%)</span>' : '';
+  $('finBody').innerHTML = `
+  <div class="row" style="gap:8px;margin-bottom:10px"><label class="f">Mes<input type="month" value="${FN.mes}" onchange="FN.mes=this.value||TODAY().slice(0,7);vFinanzas()"></label></div>
+  <div class="grid2">
+    <div class="card"><h3>Estado de resultados · ${FN.mes}</h3><div class="tw"><table><tbody>
+      <tr><td>Ventas facturadas (${r.n} facturas)</td><td class="n">${fmt(r.ventas)}</td></tr>
+      <tr><td>− Costo de lo vendido <div class="small mut">incluye el flete de compra</div></td><td class="n">${fmt(r.costo)}</td></tr>
+      <tr><td><b>= Utilidad bruta</b></td><td class="n"><b>${fmt(r.bruta)}</b>${pct(r.bruta)}</td></tr>
+      ${cats.map(([c, v]) => `<tr><td style="padding-left:18px">− ${esc(c)}</td><td class="n">${fmt(v)}</td></tr>`).join('') || '<tr><td style="padding-left:18px" class="mut">Sin gastos registrados</td><td></td></tr>'}
+      <tr><td>Total gastos</td><td class="n">${fmt(r.totGastos)}</td></tr>
+      <tr><td><b>= Utilidad neta</b></td><td class="n"><b style="color:${r.neta < 0 ? 'var(--bad)' : 'var(--ok)'}">${fmt(r.neta)}</b>${pct(r.neta)}</td></tr>
+    </tbody></table></div></div>
+    <div class="card"><h3>Para tener en cuenta</h3>
+      <div class="alert info">Las <b>compras de mercancía</b> del mes (${fmt(r.compras)}) no son gasto: son inventario. Se vuelven costo cuando vendes el producto.</div>
+      <div class="alert ${r.comis ? 'warn' : 'info'}">Comisiones calculadas a los vendedores este mes: <b>${fmt(r.comis)}</b>. Cuando las pagues, regístralas como gasto "Comisiones vendedores".</div>
+      <div class="alert info">El flete que pagas por <b>recibir</b> mercancía ya está dentro del costo. El que pagas por <b>despachar</b> a clientes va como gasto "Transporte y despachos a clientes".</div>
+    </div>
+  </div>`;
+}
+
+function formMov(tipo) {
+  const T = TODAY(), cs = cuentas(), hayAporte = movs().some(m => m.tipo === 'aporte');
+  const optC = sel => cs.map(c => `<option ${c === sel ? 'selected' : ''}>${esc(c)}</option>`).join('');
+  const tit = { gasto: 'Registrar gasto', aporte: 'Aporte de capital / otro ingreso', retiro: 'Retiro del dueño', traslado: 'Traslado entre cuentas' }[tipo];
+  openModal(tit, `
+    ${tipo === 'aporte' ? `<label class="f">Tipo<select id="mvTipo"><option value="aporte">Aporte de capital (saldo inicial, inyección de plata)</option><option value="ingreso">Otro ingreso (no es venta)</option></select></label>` : ''}
+    ${tipo === 'gasto' ? `<label class="f">Categoría<select id="mvCat">${CAT_GASTO.map(c => `<option>${c}</option>`).join('')}</select></label>` : ''}
+    <div class="fg" style="margin-top:10px">
+      <label>Valor<input id="mvVal" type="number" min="1" value="${tipo === 'aporte' && !hayAporte ? 15000000 : ''}"></label>
+      <label>${tipo === 'traslado' ? 'Sale de' : tipo === 'aporte' ? 'Entra a' : 'Sale de'}<select id="mvCta">${optC(cs[0])}</select></label>
+      ${tipo === 'traslado' ? `<label>Entra a<select id="mvDst">${optC(cs[1] || cs[0])}</select></label>` : ''}
+      <label>Fecha<input id="mvFec" type="date" value="${T}"></label>
+    </div>
+    <label class="f" style="margin-top:10px">Detalle<input id="mvDesc" placeholder="${tipo === 'gasto' ? 'Ej: arriendo bodega octubre' : tipo === 'aporte' ? 'Ej: Saldo inicial del negocio' : tipo === 'traslado' ? 'Ej: consignación del efectivo' : 'Ej: retiro personal'}" value="${tipo === 'aporte' && !hayAporte ? 'Saldo inicial del negocio' : ''}"></label>
+    <label class="f" style="margin-top:10px">Referencia / comprobante (opcional)<input id="mvRef"></label>
+    <div class="mfoot"><button class="btn sec" onclick="closeModal()">Cancelar</button><button class="btn" id="btnMv" onclick="guardarMov('${tipo}')">Guardar</button></div>`);
+}
+function guardarMov(tipo) {
+  const v = Math.round(+$('mvVal').value || 0), cta = $('mvCta').value, fec = $('mvFec').value || TODAY();
+  if (!(v > 0)) return toast('Escribe un valor mayor a 0');
+  const t = tipo === 'aporte' ? $('mvTipo').value : tipo, id = uid('M');
+  const m = { id, tipo: t, fecha: fec, ts: Date.now(), cuenta: cta, valor: v, desc: $('mvDesc').value.trim(), ref: $('mvRef').value.trim() || null };
+  if (tipo === 'gasto') m.categoria = $('mvCat').value;
+  if (tipo === 'traslado') { m.destino = $('mvDst').value; if (m.destino === cta) return toast('Elige dos cuentas distintas'); }
+  if ((TIPO_MOV[t][2] < 0 || tipo === 'traslado') && saldoCuenta(cta) < v && !confirm(`${cta} tiene ${fmt(saldoCuenta(cta))}. ¿Registrar igual? (quedará en negativo)`)) return;
+  guardar({ ['movimientos/' + id]: m }); closeModal(); render(); toast('✅ ' + TIPO_MOV[t][1] + ' registrado · ' + fmt(v));
+}
+function borrarMov(id) {
+  const m = (DB.movimientos || {})[id]; if (!m) return;
+  if (!confirm(`¿Borrar este movimiento de ${fmt(m.valor)}?${m.compraId ? ' La compra ' + m.compraId + ' volverá a quedar por pagar.' : ''}`)) return;
+  guardar({ ['movimientos/' + id]: null }); render(); toast('Movimiento borrado');
+}
+function pagarCompra(cid, que) {
+  const c = DB.compras[cid], k = compraInfo(c), saldo = que === 'flete' ? k.saldoFlete : k.saldoProv, a = que === 'flete' ? (c.transportadora || 'Transportadora') : c.proveedor;
+  openModal((que === 'flete' ? 'Pagar flete · ' : 'Pagar a ') + a, `
+    <div class="small mut" style="margin-bottom:8px">${c.id} · ${fFecha(c.fecha)}${c.facturaProv ? ' · factura ' + esc(c.facturaProv) : ''} · saldo <b>${fmt(saldo)}</b></div>
+    <div class="fg"><label>Valor<input id="pgVal" type="number" min="1" max="${saldo}" value="${saldo}"></label>
+      <label>Sale de<select id="pgCta">${cuentas().map(x => `<option>${esc(x)}</option>`).join('')}</select></label>
+      <label>Fecha<input id="pgFec" type="date" value="${TODAY()}"></label></div>
+    <label class="f" style="margin-top:10px">Referencia / comprobante (opcional)<input id="pgRef" placeholder="Ej: transferencia 12345"></label>
+    <div class="mfoot"><button class="btn sec" onclick="closeModal()">Cancelar</button><button class="btn ok" onclick="guardarPagoCompra('${cid}','${que}')">✓ Registrar pago</button></div>`);
+}
+function guardarPagoCompra(cid, que) {
+  const c = DB.compras[cid], k = compraInfo(c), saldo = que === 'flete' ? k.saldoFlete : k.saldoProv;
+  const v = Math.round(+$('pgVal').value || 0), cta = $('pgCta').value;
+  if (!(v > 0)) return toast('Escribe un valor mayor a 0');
+  if (v > saldo) return toast('El pago supera el saldo (' + fmt(saldo) + ')');
+  if (saldoCuenta(cta) < v && !confirm(`${cta} tiene ${fmt(saldoCuenta(cta))}. ¿Registrar igual? (quedará en negativo)`)) return;
+  const id = uid('M'), tercero = que === 'flete' ? (c.transportadora || 'Transportadora') : c.proveedor;
+  guardar({ ['movimientos/' + id]: { id, tipo: que === 'flete' ? 'pago_flete' : 'pago_prov', fecha: $('pgFec').value || TODAY(), ts: Date.now(), cuenta: cta, valor: v, compraId: cid, tercero, ref: $('pgRef').value.trim() || null, desc: (que === 'flete' ? 'Flete ' : 'Pago ') + cid + ' · ' + tercero } });
+  closeModal(); render(); toast(v === saldo ? '✅ ' + cid + ' quedó pagada' : '✅ Abono registrado · queda ' + fmt(saldo - v));
 }
 
 /* ---------- CARTERA ---------- */
@@ -1537,6 +1778,7 @@ function vEquipo() {
   <div class="grid2">
     <div class="card"><h3>Acceso administración</h3>
       <div class="fg"><label>Usuario<input id="cfU" value="${esc(DB.config.admin.usuario)}"></label><label>Clave nueva<input id="cfC" type="password" placeholder="Dejar vacío para no cambiar"></label></div>
+      <label class="f" style="margin-top:10px">Cuentas de dinero (separadas por coma)<input id="cfCtas" value="${esc(cuentas().join(', '))}"></label>
       <label class="f" style="margin-top:10px">Descuento máximo que puede dar el vendedor<select id="cfD">${[0, 2, 3, 5, 8, 10].map(d => `<option value="${d}" ${(DB.config.descMaxVendedor || 0) === d ? 'selected' : ''}>${d}%</option>`).join('')}</select></label>
       <div class="mfoot"><button class="btn" onclick="guardarConfig()">Guardar ajustes</button></div></div>
     <div class="card"><h3>Empresa</h3>
@@ -1589,6 +1831,11 @@ function guardarEmpresa() {
 }
 function guardarConfig() {
   const upd = { 'config/admin/usuario': $('cfU').value.trim() || 'admin', 'config/descMaxVendedor': +$('cfD').value };
+  const ctas = [...new Set($('cfCtas').value.split(',').map(x => x.trim()).filter(Boolean))];
+  if (!ctas.length) return toast('Debe haber al menos una cuenta de dinero');
+  const usadas = [...new Set(movs().flatMap(m => [m.cuenta, m.destino]).filter(Boolean))].filter(c => !ctas.includes(c));
+  if (usadas.length) return toast('No puedes quitar ' + usadas.join(', ') + ': tiene movimientos registrados');
+  upd['config/cuentas'] = ctas;
   if ($('cfC').value) { if ($('cfC').value.length < 6) return toast('La clave debe tener al menos 6 caracteres'); upd['config/admin/clave'] = $('cfC').value; }
   guardar(upd); render(); toast('Ajustes guardados');
 }
