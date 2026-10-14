@@ -87,6 +87,8 @@ td.n,th.n{text-align:right}
 .pcard .acts{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
 .modal{position:fixed;inset:0;background:rgba(30,15,25,.5);display:flex;align-items:flex-start;justify-content:center;padding:24px 12px;z-index:50;overflow-y:auto}
 .modal.hidden{display:none}
+@keyframes sacudir{0%,100%{transform:translateX(0)}20%,60%{transform:translateX(-8px)}40%,80%{transform:translateX(8px)}}
+.mbox.sacude{animation:sacudir .35s}
 .mbox{background:#fff;border-radius:14px;width:100%;max-width:640px;box-shadow:0 20px 50px rgba(0,0,0,.25)}
 .mbox.wide{max-width:920px}
 .mhead{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--line);gap:10px}
@@ -172,7 +174,7 @@ td.n,th.n{text-align:right}
   <button data-v="equipo" onclick="go('equipo')">👥 Equipo y ajustes</button>
 </nav>
 <main id="app"></main>
-<div id="modal" class="modal hidden" onclick="if(event.target===this)closeModal()">
+<div id="modal" class="modal hidden" onclick="if(event.target===this)avisoModal()">
   <div class="mbox" id="mbox"><div class="mhead"><h3 id="mTitle"></h3><button onclick="closeModal()">×</button></div><div class="mbody" id="mBody"></div></div>
 </div>
 <div id="toast"></div>
@@ -430,6 +432,9 @@ function pedirRender() {
 document.addEventListener('focusout', () => setTimeout(() => { if (renderPend) pedirRender(); }, 60));
 function openModal(title, html, wide) { $('mTitle').textContent = title; $('mBody').innerHTML = html; $('mbox').classList.toggle('wide', !!wide); $('modal').classList.remove('hidden'); }
 function closeModal() { $('modal').classList.add('hidden'); if (renderPend) pedirRender(); }
+// Un clic por fuera de la ventana no la cierra (antes se perdía lo digitado). Se cierra solo con × o Cancelar.
+function avisoModal() { const b = $('mbox'); b.classList.remove('sacude'); void b.offsetWidth; b.classList.add('sacude'); toast('Para cerrar usa × o Cancelar'); }
+window.addEventListener('beforeunload', e => { if ($('modal') && !$('modal').classList.contains('hidden')) { e.preventDefault(); e.returnValue = ''; } });
 const modalAbierto = () => !$('modal').classList.contains('hidden');
 
 /* ---------- REGLAS DE NEGOCIO ---------- */
