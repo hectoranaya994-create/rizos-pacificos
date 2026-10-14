@@ -1255,17 +1255,17 @@ function tablaInv() {
   $('tbInv').innerHTML = rows.map(p => { const mg = (p.precio - p.costo) / p.precio * 100, r = rot[p.id] || 0, dias = r ? Math.round(p.stock / (r / 30)) : null; return `<tr class="clk" onclick="formProducto('${p.id}')"><td style="padding:5px 8px">${htmlFoto(p, 'sm')}</td><td>${esc(p.sku)}</td><td style="white-space:normal;min-width:200px"><b>${esc(p.nombre)}</b></td><td class="small">${esc(p.cat)}</td><td class="n"><span class="b ${p.stock === 0 ? 'bad' : p.stock <= p.min ? 'warn' : 'ok'}">${p.stock}</span></td><td class="n">${comp[p.id] ? `<span style="color:${comp[p.id] > p.stock ? 'var(--bad)' : 'inherit'}">${comp[p.id]}</span>` : '—'}</td><td class="n">${p.min}</td><td class="n">${fmt(p.costo)}</td><td class="n">${fmt(p.precio)}${escalasDe(p).length ? `<div class="small" style="color:var(--ok)">${escalasDe(p).length} escala${escalasDe(p).length > 1 ? 's' : ''}</div>` : ''}</td><td class="n">${mg.toFixed(0)}%</td><td class="n">${r} und<div class="small mut">${dias != null ? 'alcanza ~' + dias + ' días' : 'sin movimiento'}</div></td></tr>`; }).join('') || '<tr><td colspan="11" class="mut">Sin resultados.</td></tr>';
 }
 function formProducto(pid) {
-  const p = pid ? P(pid) : { sku: '', nombre: '', cat: 'Cremas para peinar', costo: 0, precio: 0, min: 12, stock: 0 };
+  const p = pid ? P(pid) : { sku: '', nombre: '', cat: 'Cremas para peinar', costo: '', precio: '', min: '', stock: 0 };
   const cats = [...new Set([...Object.keys(ICONO_CAT), ...productos().map(x => x.cat), p.cat].filter(Boolean))].sort((a, b) => a.localeCompare(b));
   openModal(pid ? 'Editar producto' : 'Nuevo producto', `
     ${pid ? `<div class="row" style="align-items:center;gap:14px;margin-bottom:14px">${htmlFoto(p, 'big" style="width:120px;margin:0;font-size:44px')}<div class="row" style="gap:8px"><label class="btn acc btnfile sm">📷 ${p.foto ? 'Cambiar foto' : 'Subir foto'}<input type="file" accept="image/*" onchange="fotoAdmin('${pid}',this)"></label>${p.foto ? `<button class="btn sec sm" onclick="if(confirm('¿Quitar la foto?')){quitarFoto('${pid}');formProducto('${pid}');render()}">Quitar</button>` : ''}${p.foto ? `<div class="small mut" style="width:100%">Subida el ${new Date(p.foto).toLocaleDateString('es-CO')}${p.fotoPor ? ' por ' + esc(p.fotoPor) : ''}</div>` : ''}</div></div>` : '<div class="small mut" style="margin-bottom:10px">Guarda el producto y luego ábrelo para agregarle la foto.</div>'}
-    <div class="fg"><label>Código<input id="fpSku" value="${esc(p.sku)}"></label><label>Categoría<select id="fpCat" onchange="$('fpCatN').style.display = this.value === '__nueva' ? '' : 'none'; if (this.value === '__nueva') $('fpCatN').focus()">${cats.map(c => `<option value="${esc(c)}" ${c === p.cat ? 'selected' : ''}>${esc(c)}</option>`).join('')}<option value="__nueva">➕ Nueva categoría…</option></select><input id="fpCatN" placeholder="Nombre de la nueva categoría" style="display:none;margin-top:6px"></label></div>
+    <div class="fg"><label>Código <span class="small mut">(opcional)</span><input id="fpSku" value="${esc(p.sku)}" placeholder="Se genera solo si lo dejas vacío"></label><label>Categoría<select id="fpCat" onchange="$('fpCatN').style.display = this.value === '__nueva' ? '' : 'none'; if (this.value === '__nueva') $('fpCatN').focus()">${cats.map(c => `<option value="${esc(c)}" ${c === p.cat ? 'selected' : ''}>${esc(c)}</option>`).join('')}<option value="__nueva">➕ Nueva categoría…</option></select><input id="fpCatN" placeholder="Nombre de la nueva categoría" style="display:none;margin-top:6px"></label></div>
     <label class="f" style="margin-top:10px">Nombre / descripción<input id="fpNomP" value="${esc(p.nombre)}"></label>
     <div class="fg" style="margin-top:10px">
       <label>Costo<input id="fpCos" type="number" min="0" value="${p.costo}" oninput="margenPrev()"></label>
       <label>Precio mayorista<input id="fpPre" type="number" min="0" value="${p.precio}" oninput="margenPrev()"></label>
-      <label>Stock mínimo<input id="fpMin" type="number" min="0" value="${p.min}"></label>
-      ${pid ? `<label>Stock actual<input value="${p.stock}" disabled></label>` : `<label>Stock inicial<input id="fpSto" type="number" min="0" value="0"></label>`}
+      <label>Stock mínimo <span class="small mut">(opcional)</span><input id="fpMin" type="number" min="0" value="${p.min || ''}" placeholder="Para alertas de reposición"></label>
+      ${pid ? `<label>Stock actual<input value="${p.stock}" disabled></label>` : `<label>Stock inicial <span class="small mut">(opcional)</span><input id="fpSto" type="number" min="0" value="" placeholder="Normalmente entra con la compra"></label>`}
     </div>
     <div class="small mut" id="mgPrev" style="margin-top:8px"></div>
     <h3 style="margin:14px 0 4px">Precios por cantidad <span class="small mut" style="font-weight:400">(opcional)</span></h3>
@@ -1294,9 +1294,15 @@ function guardarProducto(pid) {
   const cat = $('fpCat').value === '__nueva' ? $('fpCatN').value.trim() : $('fpCat').value;
   if (!cat) return toast('Escribe el nombre de la nueva categoría');
   const d = { sku: $('fpSku').value.trim().toUpperCase(), cat, nombre: $('fpNomP').value.trim(), costo: +$('fpCos').value, precio: +$('fpPre').value, min: +$('fpMin').value || 0 };
-  if (!d.sku || !d.nombre) return toast('Código y nombre son obligatorios');
+  if (!d.nombre) return toast('Escribe el nombre del producto');
+  if (!(d.costo > 0)) return toast('Escribe el costo del producto');
+  if (!(d.precio > 0)) return toast('Escribe el precio de venta');
+  if (!d.sku) { // código automático: P0001, P0002… el siguiente libre
+    const usados = new Set(productos().map(x => x.sku)); let n = productos().length + 1;
+    while (usados.has('P' + pad(n, 4))) n++;
+    d.sku = 'P' + pad(n, 4);
+  }
   if (productos().some(x => x.sku === d.sku && x.id !== pid)) return toast('Ya existe un producto con ese código');
-  if (!(d.precio > 0)) return toast('El precio debe ser mayor a 0');
   if (d.precio < d.costo && !confirm('El precio es menor que el costo. ¿Guardar igual?')) return;
   const es = leerEscalas();
   for (let i = 0; i < es.length; i++) {
