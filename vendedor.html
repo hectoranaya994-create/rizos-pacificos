@@ -979,8 +979,8 @@ function ficha(cid, tab) {
       ${saldo ? `<button class="btn acc grow" onclick="formRecaudo('${cid}')">💵 Recaudo</button>` : ''}
     </div>
     <div class="row" style="gap:8px;margin-top:8px">
-      <a class="btn wa grow" target="_blank" href="${waLink(c.tel, `Hola ${c.contacto.split(' ')[0]}, le saluda ${yo().nombre} de ${EMPRESA}. ¿Le tomo el pedido de esta semana?`)}">WhatsApp</a>
-      <a class="btn sec grow" href="tel:${esc(c.tel)}">📞 Llamar</a>
+      ${c.tel ? `<a class="btn wa grow" target="_blank" href="${waLink(c.tel, `Hola ${(c.contacto || c.nombre).split(' ')[0]}, le saluda ${yo().nombre} de ${EMPRESA}. ¿Le tomo el pedido de esta semana?`)}">WhatsApp</a>
+      <a class="btn sec grow" href="tel:${esc(c.tel)}">📞 Llamar</a>` : '<span class="small mut grow" style="align-self:center">Sin celular registrado (pídelo y avísale a administración)</span>'}
     </div>
     ${nunca.length ? `<div class="alert info">💡 Ofrécele: ${nunca.map(p => '<b>' + esc(p.nombre) + '</b>').join(', ')}</div>` : ''}
     <div class="tabs2">
@@ -1007,16 +1007,18 @@ function formCliente(pr) {
       <label>Barrio / dirección<input id="fcBar"></label>
     </div>
     <div class="f small" style="margin-top:10px;font-weight:600;color:var(--mut)">Días de visita</div>
-    <div class="row" style="gap:12px;margin-top:4px">${[1, 2, 3, 4, 5, 6].map(d => `<label class="small" style="display:flex;gap:4px;align-items:center"><input type="checkbox" class="fcDia" value="${d}" style="width:auto" ${d === diaSemana(TODAY()) ? 'checked' : ''}>${DIAS[d]}</label>`).join('')}</div>
+    <div class="row" style="gap:12px;margin-top:4px">${[1, 2, 3, 4, 5, 6].map(d => `<label class="small" style="display:flex;gap:4px;align-items:center"><input type="checkbox" class="fcDia" value="${d}" style="width:auto" ${d === (diaSemana(TODAY()) || 1) ? 'checked' : ''}>${DIAS[d]}</label>`).join('')}</div>
     <div class="alert info">El cliente queda de <b>contado</b>. El crédito y el cupo los asigna administración.</div>
+    <div class="alert bad" id="fcErr" style="display:none"></div>
     <div class="mfoot"><button class="btn sec" onclick="closeModal()">Cancelar</button><button class="btn" onclick="guardarCliente('${pr ? pr.id : ''}')">Guardar</button></div>`);
 }
+function fcError(m) { const e = $('fcErr'); if (e) { e.textContent = m; e.style.display = ''; e.scrollIntoView({ block: 'center', behavior: 'smooth' }); } toast(m); }
 function guardarCliente(prId) {
   const d = { nombre: $('fcNom').value.trim(), tipo: $('fcTipo').value, contacto: $('fcCon').value.trim(), tel: $('fcTel').value.replace(/\D/g, ''), municipio: $('fcMun').value, barrio: $('fcBar').value.trim() || 'Centro' };
-  if (!d.nombre) return toast('Escribe el nombre del negocio');
-  if (d.tel.length !== 10) return toast('El celular debe tener 10 dígitos');
+  if (!d.nombre) return fcError('Escribe el nombre del negocio');
+  if (d.tel.length !== 10) return fcError('El celular debe tener 10 dígitos');
   d.dias = [...document.querySelectorAll('.fcDia:checked')].map(x => +x.value);
-  if (!d.dias.length) return toast('Marca al menos un día de visita');
+  if (!d.dias.length) return fcError('Marca al menos un día de visita');
   const id = uid('C'), upd = { ['clientes/' + id]: { id, ...d, vendedorId: VID, plazo: 0, cupo: 0, creado: TODAY(), creadoPor: VID } };
   if (prId) upd['prospectos/' + prId] = null;
   guardar(upd); render(); ficha(id); toast('Cliente creado');
@@ -1056,7 +1058,7 @@ function guardarRecaudo(cid) {
   guardar({ [`pedidos/${o.id}/abonos/${id}`]: { id, fecha: TODAY(), ts: Date.now(), valor: v, medio, confirmado: false, reportadoPor: VID } });
   render(); ficha(cid, 'fac'); toast('Recaudo reportado a administración');
   const c = C(cid);
-  setTimeout(() => { if (confirm('¿Enviar comprobante al cliente por WhatsApp?')) window.open(waLink(c.tel, `${EMPRESA}\nRecibimos ${fmt(v)} en ${medio} como abono a la factura ${o.factura.num}.\nSaldo pendiente: ${fmt(Math.max(0, saldoQueda))}.\nRecibió: ${yo().nombre}. ¡Gracias!`), '_blank'); }, 300);
+  if (c.tel) setTimeout(() => { if (confirm('¿Enviar comprobante al cliente por WhatsApp?')) window.open(waLink(c.tel, `${EMPRESA}\nRecibimos ${fmt(v)} en ${medio} como abono a la factura ${o.factura.num}.\nSaldo pendiente: ${fmt(Math.max(0, saldoQueda))}.\nRecibió: ${yo().nombre}. ¡Gracias!`), '_blank'); }, 300);
 }
 
 /* ---------- TOMAR PEDIDO ---------- */
@@ -1219,7 +1221,7 @@ function verPedido(id) {
     <div class="mfoot">
       ${o.estado === 'por_aprobar' ? `<button class="btn bad" onclick="cancelar('${o.id}')">Cancelar pedido</button>` : ''}
       ${o.estado === 'rechazado' && !o.reenviadoEn ? `<button class="btn acc" onclick="corregir('${o.id}')">Corregir y reenviar</button>` : ''}
-      <a class="btn wa" target="_blank" href="${waLink(c.tel, textoPedido(o))}">Enviar al cliente</a>
+      ${c.tel ? `<a class="btn wa" target="_blank" href="${waLink(c.tel, textoPedido(o))}">Enviar al cliente</a>` : ''}
     </div>`);
 }
 function cancelar(id) {
