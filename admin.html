@@ -1313,7 +1313,7 @@ function tablaInv() {
   const q = FI.q.toLowerCase().trim(), lim = addDays(TODAY(), -30), rot = {}, comp = {};
   pedidos().forEach(o => { if (VALIDOS.includes(o.estado) && o.fecha >= lim) lineasDe(o).forEach(l => rot[l.pid] = (rot[l.pid] || 0) + l.cant); if (o.estado === 'por_aprobar') lineasDe(o).forEach(l => comp[l.pid] = (comp[l.pid] || 0) + l.cant); });
   const rows = productos().filter(p => (!q || (p.sku + ' ' + p.nombre).toLowerCase().includes(q)) && (!FI.cat || p.cat === FI.cat) && (!FI.bajo || p.stock <= p.min) && (!FI.nofoto || !p.foto));
-  $('tbInv').innerHTML = rows.map(p => { const mg = (p.precio - p.costo) / p.precio * 100, r = rot[p.id] || 0, dias = r ? Math.round(p.stock / (r / 30)) : null; return `<tr class="clk" onclick="formProducto('${p.id}')"><td style="padding:5px 8px">${htmlFoto(p, 'sm')}</td><td>${esc(p.sku)}</td><td style="white-space:normal;min-width:200px"><b>${esc(p.nombre)}</b></td><td class="small">${esc(p.cat)}</td><td class="n"><span class="b ${p.stock === 0 ? 'bad' : p.stock <= p.min ? 'warn' : 'ok'}">${p.stock}</span></td><td class="n">${comp[p.id] ? `<span style="color:${comp[p.id] > p.stock ? 'var(--bad)' : 'inherit'}">${comp[p.id]}</span>` : '—'}</td><td class="n">${p.min}</td><td class="n">${fmt(p.costo)}</td><td class="n">${fmt(p.precio)}${escalasDe(p).length ? `<div class="small" style="color:var(--ok)">${escalasDe(p).length} escala${escalasDe(p).length > 1 ? 's' : ''}</div>` : ''}</td><td class="n">${mg.toFixed(0)}%</td><td class="n">${r} und<div class="small mut">${dias != null ? 'alcanza ~' + dias + ' días' : 'sin movimiento'}</div></td></tr>`; }).join('') || '<tr><td colspan="11" class="mut">Sin resultados.</td></tr>';
+  $('tbInv').innerHTML = rows.map(p => { const mg = (p.precio - p.costo) / p.precio * 100, r = rot[p.id] || 0, dias = r ? Math.round(p.stock / (r / 30)) : null; return `<tr class="clk" onclick="formProducto('${p.id}')"><td style="padding:5px 8px">${htmlFoto(p, 'sm')}</td><td>${esc(p.sku)}</td><td style="white-space:normal;min-width:200px"><b>${esc(p.nombre)}</b></td><td class="small">${esc(p.cat)}</td><td class="n"><span class="b ${p.stock === 0 ? 'bad' : p.stock <= p.min ? 'warn' : 'ok'}">${p.stock}</span></td><td class="n">${comp[p.id] ? `<span style="color:${comp[p.id] > p.stock ? 'var(--bad)' : 'inherit'}">${comp[p.id]}</span>` : '—'}</td><td class="n">${p.min}</td><td class="n">${fmt(p.costo)}</td><td class="n">${fmt(p.precio)}${escalasDe(p).length ? `<div class="small" style="color:var(--ok)">${escalasDe(p).length} escala${escalasDe(p).length > 1 ? 's' : ''}</div>` : ''}</td><td class="n">${p.costo > 0 ? mg.toFixed(0) + '%' : '<span class="small mut">sin costo</span>'}</td><td class="n">${r} und<div class="small mut">${dias != null ? 'alcanza ~' + dias + ' días' : 'sin movimiento'}</div></td></tr>`; }).join('') || '<tr><td colspan="11" class="mut">Sin resultados.</td></tr>';
 }
 function formProducto(pid) {
   const p = pid ? P(pid) : { sku: '', nombre: '', cat: 'Cremas para peinar', costo: '', precio: '', min: '', stock: 0 };
@@ -1323,7 +1323,7 @@ function formProducto(pid) {
     <div class="fg"><label>Código <span class="small mut">(opcional)</span><input id="fpSku" value="${esc(p.sku)}" placeholder="Se genera solo si lo dejas vacío"></label><label>Categoría<select id="fpCat" onchange="$('fpCatN').style.display = this.value === '__nueva' ? '' : 'none'; if (this.value === '__nueva') $('fpCatN').focus()">${cats.map(c => `<option value="${esc(c)}" ${c === p.cat ? 'selected' : ''}>${esc(c)}</option>`).join('')}<option value="__nueva">➕ Nueva categoría…</option></select><input id="fpCatN" placeholder="Nombre de la nueva categoría" style="display:none;margin-top:6px"></label></div>
     <label class="f" style="margin-top:10px">Nombre / descripción<input id="fpNomP" value="${esc(p.nombre)}"></label>
     <div class="fg" style="margin-top:10px">
-      <label>Costo<input id="fpCos" type="number" min="0" value="${p.costo}" oninput="margenPrev()"></label>
+      <label>Costo ${pid ? '' : '<span class="small mut">(opcional · se toma de la factura)</span>'}<input id="fpCos" type="number" min="0" value="${p.costo || ''}" placeholder="Se llena con la entrada de mercancía" oninput="margenPrev()"></label>
       <label>Precio mayorista<input id="fpPre" type="number" min="0" value="${p.precio}" oninput="margenPrev()"></label>
       <label>Stock mínimo <span class="small mut">(opcional)</span><input id="fpMin" type="number" min="0" value="${p.min || ''}" placeholder="Para alertas de reposición"></label>
       ${pid ? `<label>Stock actual <a href="#" onclick="event.preventDefault();ajustarStock('${pid}')" style="font-weight:600">· Ajustar</a><input value="${p.stock}" disabled></label>` : `<label>Stock inicial <span class="small mut">(opcional)</span><input id="fpSto" type="number" min="0" value="" placeholder="Normalmente entra con la compra"></label>`}
@@ -1344,8 +1344,8 @@ async function fotoAdmin(pid, input) {
   catch (e) { toast(e.message); }
 }
 function margenPrev() {
-  const c = +$('fpCos').value, p = +$('fpPre').value; $('mgPrev').textContent = p > 0 ? `Margen ${((p - c) / p * 100).toFixed(1)}% · ganancia por unidad ${fmt(p - c)}` : '';
-  const es = leerEscalas(); if ($('esPrev')) $('esPrev').textContent = es.map(e => `${e.desde}+ und: margen ${((e.precio - c) / e.precio * 100).toFixed(1)}%`).join(' · ');
+  const c = +$('fpCos').value, p = +$('fpPre').value; $('mgPrev').textContent = !(p > 0) ? '' : c > 0 ? `Margen ${((p - c) / p * 100).toFixed(1)}% · ganancia por unidad ${fmt(p - c)}` : 'Costo pendiente: el margen se calcula cuando ingreses la factura de compra.';
+  const es = leerEscalas(); if ($('esPrev')) $('esPrev').textContent = c > 0 ? es.map(e => `${e.desde}+ und: margen ${((e.precio - c) / e.precio * 100).toFixed(1)}%`).join(' · ') : '';
 }
 function leerEscalas() {
   const d = [...document.querySelectorAll('.fpEsD')], pr = [...document.querySelectorAll('.fpEsP')];
@@ -1356,7 +1356,7 @@ function guardarProducto(pid) {
   if (!cat) return toast('Escribe el nombre de la nueva categoría');
   const d = { sku: $('fpSku').value.trim().toUpperCase(), cat, nombre: $('fpNomP').value.trim(), costo: +$('fpCos').value, precio: +$('fpPre').value, min: +$('fpMin').value || 0 };
   if (!d.nombre) return toast('Escribe el nombre del producto');
-  if (!(d.costo > 0)) return toast('Escribe el costo del producto');
+  d.costo = d.costo > 0 ? d.costo : 0; // sin costo: queda pendiente hasta la primera entrada de mercancía
   if (!(d.precio > 0)) return toast('Escribe el precio de venta');
   if (!d.sku) { // código automático: P0001, P0002… el siguiente libre
     const usados = new Set(productos().map(x => x.sku)); let n = productos().length + 1;
@@ -1464,7 +1464,7 @@ function entradaMercancia() {
       <label id="enFPagL">Flete<select id="enFPag" onchange="enPagoUI()"><option value="ya">Pagado ahora (sale de la cuenta)</option><option value="pend">Queda por pagar</option></select></label>
     </div>
     <div class="row" style="margin-top:12px;align-items:flex-end">
-      <label class="f grow">Producto<input id="enProd" list="dlProd2" placeholder="Nombre o código…" onchange="const p=pFind(this.value.trim());if(p)$('enCos').value=p.costo"></label>
+      <label class="f grow">Producto<input id="enProd" list="dlProd2" placeholder="Nombre o código…" onchange="const p=pFind(this.value.trim());if(p)$('enCos').value=p.costo||''"></label>
       <label class="f" style="width:90px">Cant.<input id="enCant" type="number" min="1" value="24"></label>
       <label class="f" style="width:120px">Costo unit.<input id="enCos" type="number" min="0"></label>
       <button class="btn acc" onclick="enAdd()">Agregar</button>
