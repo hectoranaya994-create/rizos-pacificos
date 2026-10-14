@@ -1098,7 +1098,7 @@ function imprimirVenta(id) {
 const FC = { q: '', mun: '', est: '', ven: '' };
 function vClientes() {
   $('app').innerHTML = `
-  <div class="row between"><h2>Clientes</h2><button class="btn" onclick="formCliente()">+ Nuevo cliente</button></div>
+  <div class="row between"><h2>Clientes</h2><div class="row"><button class="btn sec" onclick="importarClientes()">⬆ Importar desde Excel</button><button class="btn" onclick="formCliente()">+ Nuevo cliente</button></div></div>
   <div class="row" style="margin-bottom:12px">
     <input class="grow" placeholder="Buscar por nombre, contacto o teléfono…" value="${esc(FC.q)}" oninput="FC.q=this.value;tablaClientes()">
     <select style="width:auto" onchange="FC.mun=this.value;tablaClientes()"><option value="">Todos los municipios</option>${MUNICIPIOS.map(m => `<option ${FC.mun === m ? 'selected' : ''}>${m}</option>`).join('')}</select>
@@ -1152,7 +1152,8 @@ function formCliente(cid, pr) {
       <label>Nombre del negocio<input id="fcNom" value="${esc(c.nombre)}"></label>
       <label>Tipo<select id="fcTipo">${TIPOS_CLIENTE.map(t => `<option ${c.tipo === t ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
       <label>Persona de contacto<input id="fcCon" value="${esc(c.contacto)}"></label>
-      <label>Celular / WhatsApp<input id="fcTel" value="${esc(c.tel)}"></label>
+      <label>Celular / WhatsApp <span class="small mut">(opcional)</span><input id="fcTel" value="${esc(c.tel)}"></label>
+      <label>NIT / cédula <span class="small mut">(opcional)</span><input id="fcNit" value="${esc(c.nit || '')}"></label>
       <label>Municipio<select id="fcMun">${MUNICIPIOS.map(m => `<option ${c.municipio === m ? 'selected' : ''}>${m}</option>`).join('')}</select></label>
       <label>Barrio / dirección<input id="fcBar" value="${esc(c.barrio || '')}"></label>
       <label>Vendedor asignado<select id="fcVen">${vendedores().map(v => `<option value="${v.id}" ${c.vendedorId === v.id ? 'selected' : ''}>${esc(v.nombre)} (${esc(v.zona)})</option>`).join('')}</select></label>
@@ -1167,7 +1168,8 @@ function formCliente(cid, pr) {
 function guardarCliente(cid, prId) {
   const d = { nombre: $('fcNom').value.trim(), tipo: $('fcTipo').value, contacto: $('fcCon').value.trim(), tel: $('fcTel').value.replace(/\D/g, ''), municipio: $('fcMun').value, barrio: $('fcBar').value.trim(), vendedorId: $('fcVen').value, plazo: +$('fcPla').value, cupo: +$('fcCupo').value || 0, dias: [...document.querySelectorAll('.fcDia:checked')].map(x => +x.value) };
   if (!d.nombre) return toast('Escribe el nombre del negocio');
-  if (d.tel.length !== 10) return toast('El celular debe tener 10 dígitos');
+  if (d.tel && d.tel.length !== 10) return toast('El celular debe tener 10 dígitos (o déjalo vacío)');
+  d.nit = $('fcNit').value.trim();
   if (!d.vendedorId) return toast('Crea primero un vendedor en Equipo');
   if (d.plazo && !d.cupo) return toast('Asigna un cupo para clientes a crédito');
   if (!d.plazo) d.cupo = 0;
@@ -1176,6 +1178,65 @@ function guardarCliente(cid, prId) {
   else upd['clientes/' + id] = { id, ...d, creado: TODAY() };
   if (prId) upd['prospectos/' + prId] = null;
   guardar(upd); render(); ficha(id); toast('Cliente guardado');
+}
+
+/* ---------- IMPORTAR CLIENTES (copiar y pegar desde Excel) ---------- */
+// Encabezados reconocidos: NIT, Cliente (persona), Nombre Comercial (negocio), Dirección, Barrio, Teléfono/Celular, Municipio, Tipo.
+// El negocio = Nombre Comercial; si está vacío, el nombre del cliente. No se repiten clientes con el mismo NIT o nombre.
+let IMPC = null;
+function importarClientes() {
+  if (!vendedores().length) return toast('Crea primero un vendedor en Equipo y ajustes');
+  IMPC = { filas: [] };
+  openModal('Importar clientes desde Excel', `
+    <div class="small mut">1. En Excel selecciona la tabla <b>con la fila de títulos</b> (NIT, Cliente, Nombre Comercial, Dirección, Barrio, Teléfono…) y cópiala (Ctrl+C).<br>2. Elige vendedor, municipio y días de visita para este grupo.<br>3. Pega abajo (Ctrl+V), revisa y dale <b>Importar</b>.</div>
+    <div class="fg" style="margin-top:10px">
+      <label>Vendedor<select id="icVen">${vendedores().map(v => `<option value="${v.id}">${esc(v.nombre)} (${esc(v.zona)})</option>`).join('')}</select></label>
+      <label>Municipio (si no viene en la tabla)<select id="icMun">${MUNICIPIOS.map(m => `<option>${m}</option>`).join('')}</select></label>
+      <label>Tipo (si no viene)<select id="icTipo">${TIPOS_CLIENTE.map(t => `<option>${t}</option>`).join('')}</select></label>
+    </div>
+    <div class="small" style="margin-top:10px;font-weight:600;color:var(--mut)">Días de visita para este grupo (opcional)</div>
+    <div class="row" style="gap:14px;margin-top:4px">${[1, 2, 3, 4, 5, 6].map(d => `<label class="small" style="display:flex;gap:4px;align-items:center"><input type="checkbox" class="icDia" value="${d}" style="width:auto">${DIAS[d]}</label>`).join('')}</div>
+    <textarea id="icTxt" style="min-height:130px;margin-top:10px;font-family:monospace;font-size:12px" placeholder="Pega aquí…" oninput="icLeer()"></textarea>
+    <div id="icPrev" style="margin-top:10px"></div>`, true);
+  setTimeout(() => $('icTxt') && $('icTxt').focus(), 50);
+}
+function icLeer() {
+  const lineas = $('icTxt').value.replace(/\r/g, '').split('\n').filter(l => l.trim()), out = $('icPrev'); IMPC.filas = [];
+  if (!lineas.length) { out.innerHTML = ''; return; }
+  const hi = lineas.findIndex(l => l.split('\t').some(c => ['cliente', 'nombrecomercial', 'nombre', 'negocio'].includes(normH(c))));
+  if (hi < 0) { out.innerHTML = '<div class="alert bad">No encuentro la fila de títulos. Copia la tabla incluyendo los títulos (debe haber una columna "Cliente" o "Nombre Comercial").</div>'; return; }
+  const H = lineas[hi].split('\t').map(normH), col = (...ks) => H.findIndex(h => ks.some(k => h === k || h.startsWith(k)));
+  const ix = { nit: col('nit', 'cedula', 'documento'), cli: col('cliente', 'nombre', 'contacto'), com: col('nombrecomercial', 'negocio', 'razonsocial'), dir: col('direccion'), bar: col('barrio'), tel: col('telefono', 'celular', 'whatsapp'), mun: col('municipio', 'ciudad'), tipo: col('tipo') };
+  if (ix.com === ix.cli) ix.com = -1;
+  const existe = new Set(clientes().flatMap(c => [c.nit ? 'n:' + c.nit : null, 'x:' + c.nombre.toLowerCase()]).filter(Boolean)), vistos = new Set();
+  const lim = t => String(t || '').replace(/\s+/g, ' ').trim(), sinB = t => lim(t).replace(/^(B\/|BARRIO|BRR)\s*/i, '');
+  lineas.slice(hi + 1).forEach(l => {
+    const c = l.split('\t'), g = k => ix[k] >= 0 ? lim(c[ix[k]]) : '';
+    const persona = g('cli'), negocio = g('com') || persona; if (!negocio) return;
+    const nit = g('nit').replace(/[^\dKk-]/g, ''), tel = g('tel').replace(/\D/g, '').slice(-10);
+    const mun = MUNICIPIOS.find(m => m.toLowerCase() === g('mun').toLowerCase()) || $('icMun').value;
+    const tipo = TIPOS_CLIENTE.find(t => t.toLowerCase() === g('tipo').toLowerCase()) || $('icTipo').value;
+    const errs = [], k1 = nit ? 'n:' + nit : null, k2 = 'x:' + negocio.toLowerCase();
+    if ((k1 && existe.has(k1)) || existe.has(k2)) errs.push('ya existe');
+    else if ((k1 && vistos.has(k1)) || vistos.has(k2)) errs.push('repetido en la lista');
+    if (tel && tel.length !== 10) errs.push('celular inválido');
+    if (k1) vistos.add(k1); vistos.add(k2);
+    IMPC.filas.push({ nombre: negocio, contacto: persona !== negocio ? persona : '', nit, tel: tel.length === 10 ? tel : '', barrio: sinB(g('dir') || g('bar')), municipio: mun, tipo, errs });
+  });
+  const ok = IMPC.filas.filter(f => !f.errs.length), mal = IMPC.filas.length - ok.length;
+  out.innerHTML = `<div class="row" style="gap:6px;margin-bottom:8px"><span class="b ok">${ok.length} para importar</span>${mal ? `<span class="b bad">${mal} no se importan</span>` : ''}</div>
+    <div class="tw" style="max-height:300px;overflow:auto"><table><thead><tr><th>Negocio</th><th>Contacto</th><th>NIT</th><th>Barrio / dirección</th><th>Cel.</th><th>Estado</th></tr></thead><tbody>
+    ${IMPC.filas.map(f => `<tr><td>${esc(f.nombre)}</td><td>${esc(f.contacto) || '—'}</td><td>${esc(f.nit) || '—'}</td><td style="white-space:normal;min-width:200px">${esc(f.barrio)}</td><td>${f.tel || '—'}</td><td>${f.errs.length ? `<span class="b bad">${f.errs.join(', ')}</span>` : '<span class="b ok">OK</span>'}</td></tr>`).join('')}
+    </tbody></table></div>
+    <div class="mfoot"><button class="btn sec" onclick="closeModal()">Cancelar</button><button class="btn" ${ok.length ? '' : 'disabled'} onclick="icGuardar()">Importar ${ok.length} clientes</button></div>`;
+}
+function icGuardar() {
+  const ok = IMPC.filas.filter(f => !f.errs.length); if (!ok.length) return;
+  const ven = $('icVen').value, dias = [...document.querySelectorAll('.icDia:checked')].map(x => +x.value);
+  if (!confirm(`¿Importar ${ok.length} clientes para ${V(ven).nombre}?`)) return;
+  const upd = {}; let n = 0;
+  ok.forEach(f => { const id = uid('C') + (n++); upd['clientes/' + id] = { id, nombre: f.nombre, tipo: f.tipo, contacto: f.contacto, tel: f.tel, nit: f.nit, municipio: f.municipio, barrio: f.barrio, vendedorId: ven, plazo: 0, cupo: 0, dias, creado: TODAY() }; });
+  guardar(upd); closeModal(); render(); toast(`✅ ${ok.length} clientes importados`);
 }
 
 /* ---------- RUTAS Y COBERTURA ---------- */
