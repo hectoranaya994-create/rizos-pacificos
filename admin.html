@@ -1470,6 +1470,17 @@ function entradaMercancia(cid) {
       <label class="f" style="width:120px">Costo unit.<input id="enCos" type="number" min="0"></label>
       <button class="btn acc" onclick="enAdd()">Agregar</button>
     </div>
+    <div style="margin-top:6px"><button class="btn sm sec" onclick="enNuevoProd()">＋ Producto nuevo</button> <span class="small mut">si no está en la lista, créalo aquí sin salir de la entrada</span></div>
+    <div id="enNP" class="card" style="display:none;margin-top:8px;padding:12px">
+      <div class="fg">
+        <label>Nombre del producto<input id="enNPn" placeholder="Ej: GEL VIBRANTE FAWY X 370"></label>
+        <label>Precio de venta<input id="enNPp" type="number" min="1" inputmode="numeric"></label>
+        <label>Categoría<select id="enNPc">${[...new Set([...Object.keys(ICONO_CAT), ...productos().map(x => x.cat)].filter(Boolean))].sort((a, b) => a.localeCompare(b)).map(c => `<option>${esc(c)}</option>`).join('')}</select></label>
+        <label>Código <span class="small mut">(opcional)</span><input id="enNPs" placeholder="Se genera solo"></label>
+      </div>
+      <div class="small mut" style="margin-top:6px">El costo lo toma de esta factura. Stock mínimo, foto y escalas los puedes poner después en Inventario.</div>
+      <div class="row" style="margin-top:8px;justify-content:flex-end"><button class="btn sm sec" onclick="$('enNP').style.display='none'">Cancelar</button><button class="btn sm ok" onclick="enCrearProd()">✓ Crear y seleccionar</button></div>
+    </div>
     <datalist id="dlProd2">${productos().map(p => `<option value="${esc(p.sku + ' · ' + p.nombre)}">Stock ${p.stock} · mín ${p.min}</option>`).join('')}</datalist>
     <div id="enBody" style="margin-top:12px"></div>`, true);
   $('enProd').addEventListener('keydown', e => { if (e.key === 'Enter') enAdd(); });
@@ -1502,6 +1513,26 @@ function enFlete() { const f = +($('enFlete') && $('enFlete').value) || 0; retur
 function enCostos() {
   const base = sum(ENT.lineas, l => l.cant * l.costo), f = enFlete(), k = base > 0 ? f / base : 0;
   return ENT.lineas.map(l => ({ ...l, fleteU: Math.round(l.costo * k), final: Math.round(l.costo * (1 + k)) }));
+}
+function enNuevoProd() {
+  const b = $('enNP'), v = $('enProd').value.trim(); b.style.display = b.style.display === 'none' ? '' : 'none';
+  if (b.style.display === '' ) { if (v && !pFind(v)) $('enNPn').value = v; $('enNPn').focus(); }
+}
+function enCrearProd() {
+  const nombre = $('enNPn').value.trim().replace(/\s+/g, ' '), precio = +$('enNPp').value, cat = $('enNPc').value || 'Otros';
+  let sku = $('enNPs').value.trim().toUpperCase();
+  if (!nombre) return toast('Escribe el nombre del producto');
+  if (!(precio > 0)) return toast('Escribe el precio de venta');
+  if (productos().some(x => x.nombre.toLowerCase() === nombre.toLowerCase()) && !confirm('Ya existe un producto llamado "' + nombre + '". ¿Crear otro igual?')) return;
+  if (!sku) { const usados = new Set(productos().map(x => x.sku)); let n = productos().length + 1; while (usados.has('P' + pad(n, 4))) n++; sku = 'P' + pad(n, 4); }
+  if (productos().some(x => x.sku === sku)) return toast('Ya existe un producto con ese código');
+  const id = uid('P');
+  guardar({ ['productos/' + id]: { id, sku, cat, nombre, costo: 0, precio, min: 0, escalas: null, stock: 0 } });
+  $('dlProd2').innerHTML = productos().map(p => `<option value="${esc(p.sku + ' · ' + p.nombre)}">Stock ${p.stock} · mín ${p.min}</option>`).join('');
+  $('enProd').value = sku + ' · ' + nombre; $('enCos').value = '';
+  ['enNPn', 'enNPp', 'enNPs'].forEach(k => $(k).value = ''); $('enNP').style.display = 'none';
+  $('enCant').focus(); $('enCant').select();
+  toast('✅ Producto ' + sku + ' creado · pon cantidad y costo y dale Agregar');
 }
 function enAdd() {
   const p = pFind($('enProd').value.trim()), cant = parseInt($('enCant').value, 10), costo = +$('enCos').value;
