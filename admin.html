@@ -731,7 +731,7 @@ let VIEW = 'aprobar', PREV_AP = null, NUEVOS = new Set();
 const TITULO = document.title;
 
 RENDER = render;
-iniciarDatos(origen => { vigilar(); if (origen === 'remoto') pedirRender(); else RENDER(); });
+setTimeout(() => iniciarDatos(origen => { vigilar(); if (origen === 'remoto') pedirRender(); else RENDER(); }), 0);   // arranca con todo el script cargado
 
 function vigilar() {
   if (!DB.pedidos && !DB.config) return;
