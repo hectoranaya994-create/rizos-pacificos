@@ -1521,13 +1521,13 @@ async function guardarEntrada() {
   // Pago: contado sale de caja ya; crédito queda en cuentas por pagar. El flete a transportadora es un pago aparte.
   const fec = $('enFec').value || TODAY(), cond = $('enCond').value, plazo = Math.max(1, parseInt($('enPlazo').value, 10) || 30), cta = $('enCta').value;
   const fMod = flete ? $('enFMod').value : null, trans = flete && fMod === 'transportadora' ? ($('enTr').value.trim() || 'Transportadora') : null;
-  const merc = sum(LC, l => l.cant * l.costo), aProv = merc + (fMod === 'proveedor' ? flete : 0), fYa = flete && fMod === 'transportadora' && $('enFPag').value === 'ya';
+  const merc = Math.round(sum(LC, l => l.cant * l.costo)), aProv = merc + (fMod === 'proveedor' ? flete : 0), fYa = flete && fMod === 'transportadora' && $('enFPag').value === 'ya';
   const sale = (cond === 'contado' ? aProv : 0) + (fYa ? flete : 0);
   if (sale > 0 && saldoCuenta(cta) < sale && !confirm(`La cuenta ${cta} tiene ${fmt(saldoCuenta(cta))} y este pago es de ${fmt(sale)}. ¿Registrar igual? (quedará en negativo)`)) { $('btnEnt').disabled = false; return; }
   if (cond === 'contado') { const mid = uid('M'); upd['movimientos/' + mid] = { id: mid, tipo: 'pago_prov', fecha: fec, ts: Date.now(), cuenta: cta, valor: aProv, compraId: id, tercero: prov, desc: 'Pago de contado ' + id + ($('enFacP').value.trim() ? ' · fact. ' + $('enFacP').value.trim() : '') }; }
   if (fYa) { const mid = uid('M'); upd['movimientos/' + mid] = { id: mid, tipo: 'pago_flete', fecha: fec, ts: Date.now() + 1, cuenta: cta, valor: flete, compraId: id, tercero: trans, desc: 'Flete ' + id + ' · ' + trans }; }
   for (const pid in sube) upd[`productos/${pid}/stock`] = P(pid).stock + sube[pid];
-  upd['compras/' + id] = { id, fecha: $('enFec').value || TODAY(), proveedor: prov, facturaProv: $('enFacP').value.trim(), lineas: LC.map(l => ({ pid: l.pid, cant: l.cant, costo: l.final, costoFactura: l.costo, costoAnt: P(l.pid).costo })), flete, total: sum(LC, l => l.cant * l.costo) + flete, condicion: cond, plazo: cond === 'credito' ? plazo : 0, vence: cond === 'credito' ? addDays(fec, plazo) : fec, fleteModo: fMod, transportadora: trans };
+  upd['compras/' + id] = { id, fecha: $('enFec').value || TODAY(), proveedor: prov, facturaProv: $('enFacP').value.trim(), lineas: LC.map(l => ({ pid: l.pid, cant: l.cant, costo: l.final, costoFactura: l.costo, costoAnt: P(l.pid).costo })), flete, total: merc + flete, condicion: cond, plazo: cond === 'credito' ? plazo : 0, vence: cond === 'credito' ? addDays(fec, plazo) : fec, fleteModo: fMod, transportadora: trans };
   const provs = DB.config.proveedores || []; if (!provs.includes(prov)) upd['config/proveedores'] = [...provs, prov];
   guardar(upd); closeModal(); render(); toast('Entrada ' + id + ' registrada · stock actualizado');
 }
@@ -1557,12 +1557,12 @@ const tsDe = f => Date.parse(f + 'T12:00:00');
 // Estado de pago de una compra. Compras viejas (sin condición) quedan por pagar desde su fecha.
 function compraInfo(c) {
   if (c.anulada) return { merc: 0, flete: 0, modo: null, totalProv: 0, totalFlete: 0, pagadoProv: 0, pagadoFlete: 0, saldoProv: 0, saldoFlete: 0, vence: c.vence || c.fecha, condicion: 'anulada' };
-  const merc = sum(c.lineas || [], l => l.cant * (l.costoFactura != null ? l.costoFactura : l.costo));
+  const merc = Math.round(sum(c.lineas || [], l => l.cant * (l.costoFactura != null ? l.costoFactura : l.costo)));   // pesos enteros (costos con decimales)
   const flete = +c.flete || 0, modo = flete ? (c.fleteModo || 'transportadora') : null;
   const totalProv = merc + (modo === 'proveedor' ? flete : 0), totalFlete = modo === 'transportadora' ? flete : 0;
   const pag = t => sum(movs().filter(m => m.tipo === t && m.compraId === c.id), m => m.valor);
   const pagadoProv = pag('pago_prov'), pagadoFlete = pag('pago_flete');
-  return { merc, flete, modo, totalProv, totalFlete, pagadoProv, pagadoFlete, saldoProv: Math.max(0, totalProv - pagadoProv), saldoFlete: Math.max(0, totalFlete - pagadoFlete), vence: c.vence || c.fecha, condicion: c.condicion || 'sin dato' };
+  return { merc, flete, modo, totalProv, totalFlete, pagadoProv, pagadoFlete, saldoProv: Math.max(0, Math.round(totalProv - pagadoProv)), saldoFlete: Math.max(0, Math.round(totalFlete - pagadoFlete)), vence: c.vence || c.fecha, condicion: c.condicion || 'sin dato' };
 }
 
 // Todos los movimientos de dinero (manuales + automáticos), en orden cronológico, con signo.
