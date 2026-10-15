@@ -1442,10 +1442,11 @@ function impGuardar() {
 }
 let ENT = null;
 const pFind = v => productos().find(x => v === x.sku + ' · ' + x.nombre) || productos().find(x => x.sku.toLowerCase() === v.toLowerCase());
-function entradaMercancia() {
-  ENT = { lineas: [] };
+function entradaMercancia(cid) {
+  const ce = cid ? DB.compras[cid] : null;   // con cid: editar una compra ya registrada
+  ENT = { lineas: ce ? (ce.lineas || []).filter(l => P(l.pid)).map(l => ({ pid: l.pid, cant: l.cant, costo: l.costoFactura != null ? l.costoFactura : l.costo })) : [], edit: ce ? cid : null };
   const prov = nombresProveedores();
-  openModal('Entrada de mercancía (compra a proveedor)', `
+  openModal(ce ? 'Editar compra ' + cid : 'Entrada de mercancía (compra a proveedor)', `
     <div class="fg">
       <label>Proveedor<input id="enProv" list="dlProv" value="${esc(prov[0] || '')}" onchange="enProvSel()"><datalist id="dlProv">${prov.map(p => `<option value="${esc(p)}">`).join('')}</datalist></label>
       <label>N° factura proveedor<input id="enFacP"></label>
@@ -1472,7 +1473,14 @@ function entradaMercancia() {
     <datalist id="dlProd2">${productos().map(p => `<option value="${esc(p.sku + ' · ' + p.nombre)}">Stock ${p.stock} · mín ${p.min}</option>`).join('')}</datalist>
     <div id="enBody" style="margin-top:12px"></div>`, true);
   $('enProd').addEventListener('keydown', e => { if (e.key === 'Enter') enAdd(); });
-  enProvSel();
+  if (ce) {
+    $('enProv').value = ce.proveedor || ''; $('enFacP').value = ce.facturaProv || ''; $('enFec').value = ce.fecha || TODAY();
+    $('enFlete').value = +ce.flete || ''; $('enCond').value = ce.condicion === 'credito' ? 'credito' : 'contado'; $('enPlazo').value = ce.plazo || 30;
+    $('enFMod').value = ce.fleteModo || 'transportadora'; $('enTr').value = ce.transportadora || '';
+    $('enFPag').value = movs().some(m => m.compraId === cid && m.tipo === 'pago_flete') ? 'ya' : 'pend';
+    const pc = movs().find(m => m.compraId === cid); if (pc && cuentas().includes(pc.cuenta)) $('enCta').value = pc.cuenta;
+    $('enBody').insertAdjacentHTML('beforebegin', `<div class="alert info" style="margin-top:10px">Puedes cambiar cantidades, costos, flete, proveedor, factura y fecha. El inventario y el costo de los productos se corrigen solos con la diferencia. Pagos registrados a esta compra: <b>${fmt(sum(movs().filter(m => m.compraId === cid), m => m.valor))}</b>.</div>`);
+  } else enProvSel();
   enRender();
 }
 // Reparte el flete proporcional al valor de cada línea y devuelve el costo unitario final (costo + flete por unidad)
@@ -1504,15 +1512,16 @@ function enAdd() {
 function enRender() {
   const LC = enCostos(), flete = enFlete(), base = sum(ENT.lineas, l => l.cant * l.costo);
   enPagoUI();
-  $('enBody').innerHTML = `<div class="tw"><table><thead><tr><th>Producto</th><th class="n">Cant.</th><th class="n">Costo factura</th>${flete ? '<th class="n">+ Flete c/u</th><th class="n">Costo final</th>' : ''}<th class="n">Subtotal</th><th></th></tr></thead><tbody>${LC.map((l, i) => { const p = P(l.pid); return `<tr><td style="white-space:normal">${esc(p.nombre)}${l.final !== p.costo ? `<div class="small" style="color:var(--warn)">Costo anterior ${fmt(p.costo)} → margen ${p.precio ? ((p.precio - l.final) / p.precio * 100).toFixed(0) : 0}%</div>` : ''}</td><td class="n">${l.cant}</td><td class="n">${fmt(l.costo)}</td>${flete ? `<td class="n">${fmt(l.fleteU)}</td><td class="n"><b>${fmt(l.final)}</b></td>` : ''}<td class="n">${fmt(l.cant * l.final)}</td><td><button class="btn sm sec" onclick="ENT.lineas.splice(${i},1);enRender()">✕</button></td></tr>`; }).join('') || `<tr><td colspan="${flete ? 7 : 5}" class="mut">Agrega los productos de la factura del proveedor.</td></tr>`}</tbody></table></div>
+  $('enBody').innerHTML = `<div class="tw"><table><thead><tr><th>Producto</th><th class="n">Cant.</th><th class="n">Costo factura</th>${flete ? '<th class="n">+ Flete c/u</th><th class="n">Costo final</th>' : ''}<th class="n">Subtotal</th><th></th></tr></thead><tbody>${LC.map((l, i) => { const p = P(l.pid); return `<tr><td style="white-space:normal">${esc(p.nombre)}${l.final !== p.costo ? `<div class="small" style="color:var(--warn)">Costo anterior ${fmt(p.costo)} → margen ${p.precio ? ((p.precio - l.final) / p.precio * 100).toFixed(0) : 0}%</div>` : ''}</td><td class="n"><input type="number" min="1" value="${l.cant}" style="width:70px;text-align:right" onchange="ENT.lineas[${i}].cant=Math.max(1,parseInt(this.value,10)||1);enRender()"></td><td class="n"><input type="number" min="0" step="any" value="${l.costo}" style="width:100px;text-align:right" onchange="if(+this.value>0)ENT.lineas[${i}].costo=+this.value;enRender()"></td>${flete ? `<td class="n">${fmt(l.fleteU)}</td><td class="n"><b>${fmt(l.final)}</b></td>` : ''}<td class="n">${fmt(l.cant * l.final)}</td><td><button class="btn sm sec" onclick="ENT.lineas.splice(${i},1);enRender()">✕</button></td></tr>`; }).join('') || `<tr><td colspan="${flete ? 7 : 5}" class="mut">Agrega los productos de la factura del proveedor.</td></tr>`}</tbody></table></div>
   ${flete ? `<div class="tot" style="max-width:300px;margin-left:auto"><span>Mercancía</span><span>${fmt(base)}</span></div><div class="tot" style="max-width:300px;margin-left:auto"><span>Flete</span><span>${fmt(flete)}</span></div>` : ''}
   <div class="tot big" style="max-width:300px;margin-left:auto"><span>Total compra</span><span>${fmt(base + flete)}</span></div>
-  <div class="mfoot"><button class="btn sec" onclick="closeModal()">Cancelar</button><button class="btn" id="btnEnt" onclick="guardarEntrada()">Guardar entrada</button></div>`;
+  <div class="mfoot"><button class="btn sec" onclick="closeModal()">Cancelar</button><button class="btn" id="btnEnt" onclick="guardarEntrada()">${ENT.edit ? 'Guardar cambios' : 'Guardar entrada'}</button></div>`;
 }
 async function guardarEntrada() {
   const prov = $('enProv').value.trim();
   if (!prov) return toast('Escribe el proveedor');
   if (!ENT.lineas.length) return toast('Agrega al menos un producto');
+  if (ENT.edit) return guardarEdicionCompra(ENT.edit);
   $('btnEnt').disabled = true;
   let n; try { n = await siguiente('com'); } catch (e) { $('btnEnt').disabled = false; return toast(e.message); }
   const id = 'COM-' + pad(n, 4), upd = {}, sube = {};
@@ -1531,9 +1540,62 @@ async function guardarEntrada() {
   const provs = DB.config.proveedores || []; if (!provs.includes(prov)) upd['config/proveedores'] = [...provs, prov];
   guardar(upd); closeModal(); render(); toast('Entrada ' + id + ' registrada · stock actualizado');
 }
+// Editar compra: aplica solo la DIFERENCIA (stock, costo de productos y pagos automáticos) y guarda la versión anterior.
+function guardarEdicionCompra(cid) {
+  const c = DB.compras[cid]; if (!c || c.anulada) { closeModal(); return toast('Esa compra ya no se puede editar'); }
+  const prov = $('enProv').value.trim().replace(/\s+/g, ' ');
+  const LC = enCostos(), flete = enFlete(), fec = $('enFec').value || c.fecha || TODAY(), cond = $('enCond').value;
+  const plazo = Math.max(1, parseInt($('enPlazo').value, 10) || 30), cta = $('enCta').value;
+  const fMod = flete ? $('enFMod').value : null, trans = flete && fMod === 'transportadora' ? ($('enTr').value.trim() || 'Transportadora') : null;
+  const merc = Math.round(sum(LC, l => l.cant * l.costo)), aProv = merc + (fMod === 'proveedor' ? flete : 0);
+  const viejas = c.lineas || [], upd = {};
+  // Inventario: nueva cantidad − cantidad anterior, por producto
+  const qOld = {}, qNew = {}; viejas.forEach(l => qOld[l.pid] = (qOld[l.pid] || 0) + l.cant); LC.forEach(l => qNew[l.pid] = (qNew[l.pid] || 0) + l.cant);
+  const pids = [...new Set([...Object.keys(qOld), ...Object.keys(qNew)])].filter(pid => P(pid));
+  const falta = pids.filter(pid => P(pid).stock + (qNew[pid] || 0) - (qOld[pid] || 0) < 0);
+  if (falta.length) return alert('No se puede guardar: parte de esa mercancía ya se vendió.\n\n' + falta.map(pid => `${P(pid).nombre}: hay ${P(pid).stock}, quitarías ${(qOld[pid] || 0) - (qNew[pid] || 0)}`).join('\n') + '\n\nDeja esas cantidades como mínimo en lo que quedó, o corrige con "Ajustar stock".');
+  pids.forEach(pid => { const d = (qNew[pid] || 0) - (qOld[pid] || 0); if (d) upd[`productos/${pid}/stock`] = P(pid).stock + d; });
+  // Costo del producto: se corrige solo si no ha entrado otra compra después que lo haya cambiado
+  const vl = pid => viejas.filter(l => l.pid === pid).pop(), nl = pid => LC.filter(l => l.pid === pid).pop(), sinTocar = [];
+  pids.forEach(pid => {
+    const o = vl(pid), n = nl(pid), cur = P(pid).costo;
+    if (n && (!o || cur === o.costo)) { if (n.final !== cur) upd[`productos/${pid}/costo`] = n.final; }
+    else if (!n && o && cur === o.costo && o.costoAnt != null) upd[`productos/${pid}/costo`] = o.costoAnt;
+    else if (n && o && n.final !== o.costo) sinTocar.push(P(pid).nombre);
+  });
+  // Pagos automáticos (los que creó la entrada): se ajustan a la diferencia; los pagos hechos a mano no se tocan
+  const pagos = movs().filter(m => m.compraId === cid), now = Date.now();
+  const autoP = pagos.find(m => m.tipo === 'pago_prov' && String(m.desc || '').startsWith('Pago de contado'));
+  const pagadoP = sum(pagos.filter(m => m.tipo === 'pago_prov'), m => m.valor);
+  const avisos = [];
+  if (cond === 'contado') {
+    const d = aProv - pagadoP;
+    if (d && autoP && autoP.valor + d > 0) upd[`movimientos/${autoP.id}/valor`] = autoP.valor + d;
+    else if (d > 0) { const mid = uid('M'); upd['movimientos/' + mid] = { id: mid, tipo: 'pago_prov', fecha: fec, ts: now, cuenta: cta, valor: d, compraId: cid, tercero: prov, desc: 'Pago de contado ' + cid + ' (ajuste por edición)' }; }
+    else if (d < 0) avisos.push(`Al proveedor se le pagó ${fmt(-d)} de más (queda a favor).`);
+  } else if (autoP) {
+    if (!confirm(`La compra pasa a CRÉDITO: se borra el pago de contado de ${fmt(autoP.valor)} y la plata vuelve a ${autoP.cuenta}. Queda en cuentas por pagar. ¿Seguir?`)) return;
+    upd['movimientos/' + autoP.id] = null;
+  }
+  const pagF = pagos.filter(m => m.tipo === 'pago_flete'), pagadoF = sum(pagF, m => m.valor), autoF = pagF.find(m => String(m.desc || '').startsWith('Flete ' + cid));
+  if (fMod === 'transportadora' && $('enFPag').value === 'ya') {
+    const d = flete - pagadoF;
+    if (d && autoF && autoF.valor + d > 0) { upd[`movimientos/${autoF.id}/valor`] = autoF.valor + d; upd[`movimientos/${autoF.id}/tercero`] = trans; }
+    else if (d > 0) { const mid = uid('M'); upd['movimientos/' + mid] = { id: mid, tipo: 'pago_flete', fecha: fec, ts: now + 1, cuenta: cta, valor: d, compraId: cid, tercero: trans, desc: 'Flete ' + cid + ' · ' + trans }; }
+    else if (d < 0) avisos.push(`El flete se pagó ${fmt(-d)} de más.`);
+  } else if (autoF) upd['movimientos/' + autoF.id] = null;   // ya no hay flete aparte, o quedó por pagar
+  if (prov !== c.proveedor) pagos.filter(m => m.tipo === 'pago_prov' && m.tercero === c.proveedor && !upd['movimientos/' + m.id]).forEach(m => upd[`movimientos/${m.id}/tercero`] = prov);
+  const antes = { ts: now, proveedor: c.proveedor, facturaProv: c.facturaProv || '', fecha: c.fecha, total: c.total, flete: c.flete || 0, condicion: c.condicion || '', lineas: viejas.map(l => ({ pid: l.pid, cant: l.cant, costo: l.costoFactura != null ? l.costoFactura : l.costo })) };
+  const nuevo = { ...c, fecha: fec, proveedor: prov, facturaProv: $('enFacP').value.trim(), lineas: LC.map(l => { const o = vl(l.pid); return { pid: l.pid, cant: l.cant, costo: l.final, costoFactura: l.costo, costoAnt: o && o.costoAnt != null ? o.costoAnt : P(l.pid).costo }; }), flete, total: merc + flete, condicion: cond, plazo: cond === 'credito' ? plazo : 0, vence: cond === 'credito' ? addDays(fec, plazo) : fec, fleteModo: fMod, transportadora: trans, editadoTs: now, ediciones: [...(c.ediciones || []), antes].slice(-10) };
+  upd['compras/' + cid] = nuevo;
+  const provs = DB.config.proveedores || []; if (!provs.includes(prov)) upd['config/proveedores'] = [...provs, prov];
+  guardar(upd); closeModal(); render(); historialCompras();
+  toast('✅ Compra ' + cid + ' corregida');
+  if (sinTocar.length || avisos.length) setTimeout(() => alert([...avisos, ...(sinTocar.length ? ['No cambié el costo actual de: ' + sinTocar.join(', ') + ' (entró otra compra después que ya lo actualizó).'] : [])].join('\n\n')), 300);
+}
 function historialCompras() {
   const cs = vals(DB.compras).sort((a, b) => b.fecha.localeCompare(a.fecha));
-  openModal('Historial de compras', `<div class="tw"><table><thead><tr><th>Compra</th><th>Fecha</th><th>Proveedor</th><th>Productos</th><th class="n">Total</th><th></th></tr></thead><tbody>${cs.map(c => `<tr style="${c.anulada ? 'opacity:.55' : ''}"><td>${c.id}${c.facturaProv ? '<div class="small mut">Fact. ' + esc(c.facturaProv) + '</div>' : ''}</td><td>${fFecha(c.fecha)}</td><td>${esc(c.proveedor)}</td><td class="small" style="white-space:normal">${(c.lineas || []).map(l => l.cant + ' × ' + esc(P(l.pid) ? P(l.pid).nombre : l.pid)).join('<br>')}</td><td class="n">${fmt(c.total)}${c.flete ? '<div class="small mut">incl. flete ' + fmt(c.flete) + '</div>' : ''}${(() => { const k = compraInfo(c), s = k.saldoProv + k.saldoFlete; if (c.anulada) return `<div class="small"><span class="b mut">Anulada</span></div>${c.motivo ? `<div class="small mut">${esc(c.motivo)}</div>` : ''}`; return s > 0 ? `<div class="small" style="color:var(--bad)">Debe ${fmt(s)}</div>` : '<div class="small" style="color:var(--ok)">Pagada</div>'; })()}</td><td>${c.anulada ? '' : `<button class="btn sm bad" onclick="anularCompra('${c.id}')">Anular</button>`}</td></tr>`).join('') || '<tr><td colspan="6" class="mut">Sin compras.</td></tr>'}</tbody></table></div>`, true);
+  openModal('Historial de compras', `<div class="tw"><table><thead><tr><th>Compra</th><th>Fecha</th><th>Proveedor</th><th>Productos</th><th class="n">Total</th><th></th></tr></thead><tbody>${cs.map(c => `<tr style="${c.anulada ? 'opacity:.55' : ''}"><td>${c.id}${c.facturaProv ? '<div class="small mut">Fact. ' + esc(c.facturaProv) + '</div>' : ''}</td><td>${fFecha(c.fecha)}</td><td>${esc(c.proveedor)}</td><td class="small" style="white-space:normal">${(c.lineas || []).map(l => l.cant + ' × ' + esc(P(l.pid) ? P(l.pid).nombre : l.pid)).join('<br>')}</td><td class="n">${fmt(c.total)}${c.flete ? '<div class="small mut">incl. flete ' + fmt(c.flete) + '</div>' : ''}${(() => { const k = compraInfo(c), s = k.saldoProv + k.saldoFlete; if (c.anulada) return `<div class="small"><span class="b mut">Anulada</span></div>${c.motivo ? `<div class="small mut">${esc(c.motivo)}</div>` : ''}`; return s > 0 ? `<div class="small" style="color:var(--bad)">Debe ${fmt(s)}</div>` : '<div class="small" style="color:var(--ok)">Pagada</div>'; })()}</td><td style="white-space:nowrap">${c.anulada ? '' : `<button class="btn sm sec" onclick="entradaMercancia('${c.id}')">✏️ Editar</button> <button class="btn sm bad" onclick="anularCompra('${c.id}')">Anular</button>`}</td></tr>`).join('') || '<tr><td colspan="6" class="mut">Sin compras.</td></tr>'}</tbody></table></div>`, true);
 }
 
 /* ---------- FINANZAS: CAJA, CUENTAS POR PAGAR, GASTOS Y RESULTADOS ---------- */
