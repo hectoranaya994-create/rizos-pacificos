@@ -743,11 +743,13 @@ const misPedidos = () => pedidos().filter(o => o.vendedorId === VID);
 const enCola = id => cola().some(u => Object.keys(u).some(k => k.startsWith('pedidos/' + id)));
 
 RENDER = render;
-iniciarDatos(origen => {
+// Arranca cuando TODO el script ya cargó: si había sesión guardada, render() usa constantes declaradas más abajo
+// (antes fallaba al reabrir la app con sesión abierta: quedaba "Sin conexión" y no dejaba entrar).
+setTimeout(() => iniciarDatos(origen => {
   if (VID && DB.vendedores && !DB.vendedores[VID]) salir(true);
   vigilarCambios();
   if (origen === 'remoto') pedirRender(); else RENDER();
-});
+}), 0);
 
 function vigilarCambios() {
   if (!VID || !DB.pedidos) return;
