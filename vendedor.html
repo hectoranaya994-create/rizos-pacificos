@@ -1122,14 +1122,15 @@ function verProducto(pid) {
     ${htmlFoto(p, 'big')}
     <div class="row between"><div><div class="small mut">${esc(p.sku)} · ${esc(p.cat)}</div><b style="font-size:20px">${fmt(p.precio)}</b>${escalasDe(p).length ? `<div class="small" style="color:var(--ok)">Por cantidad: ${escalasTxt(p)}</div>` : ''}</div><span class="b ${p.stock === 0 ? 'bad' : p.stock <= p.min ? 'warn' : 'ok'}">${p.stock ? p.stock + ' disponibles' : 'Agotado'}</span></div>
     ${p.foto ? `<div class="small mut" style="margin-top:6px">Foto de ${new Date(p.foto).toLocaleDateString('es-CO')}${p.fotoPor ? ' · ' + esc(p.fotoPor) : ''}</div>` : '<div class="alert info">Este producto aún no tiene foto. Tómala para que todo el equipo la vea en el catálogo.</div>'}
-    <div class="row" style="margin-top:12px;gap:8px">
-      <label class="btn acc btnfile grow">📷 ${p.foto ? 'Cambiar foto' : 'Tomar foto'}<input type="file" accept="image/*" capture="environment" onchange="fotoElegida('${pid}',this)"></label>
+    ${p.foto ? '' : `<div class="row" style="margin-top:12px;gap:8px">
+      <label class="btn acc btnfile grow">📷 Tomar foto<input type="file" accept="image/*" capture="environment" onchange="fotoElegida('${pid}',this)"></label>
       <label class="btn sec btnfile grow">🖼 Galería<input type="file" accept="image/*" onchange="fotoElegida('${pid}',this)"></label>
-    </div>
+    </div>`}
     ${CART && CART.clienteId ? `<div class="mfoot"><button class="btn" onclick="setCant('${pid}',${n + 1});closeModal()">＋ Agregar al pedido${n ? ' (lleva ' + n + ')' : ''}</button></div>` : ''}`);
 }
 async function fotoElegida(pid, input) {
   const file = input.files && input.files[0]; if (!file) return;
+  if (P(pid) && P(pid).foto) return toast('La foto solo se cambia desde administración');   // el vendedor no reemplaza fotos
   toast('Subiendo foto…');
   try { await subirFoto(pid, file, yo().nombre); toast('✅ Foto guardada'); verProducto(pid); }
   catch (e) { toast(e.message); }
