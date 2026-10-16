@@ -1451,7 +1451,7 @@ function entradaMercancia(cid) {
       <label>Proveedor<input id="enProv" list="dlProv" value="${esc(prov[0] || '')}" onchange="enProvSel()"><datalist id="dlProv">${prov.map(p => `<option value="${esc(p)}">`).join('')}</datalist></label>
       <label>N° factura proveedor<input id="enFacP"></label>
       <label>Fecha<input id="enFec" type="date" value="${TODAY()}"></label>
-      <label>Flete pagado ($)<input id="enFlete" type="number" min="0" value="" placeholder="0" oninput="enRender()"></label>
+      <label>Flete pagado ($)<input id="enFlete" type="text" inputmode="decimal" value="" placeholder="0" oninput="enRender()"></label>
     </div>
     <div class="small mut" style="margin-top:6px">El flete se reparte entre los productos según su valor y queda sumado al costo de cada uno.</div>
     <div class="fg" style="margin-top:10px">
@@ -1465,9 +1465,9 @@ function entradaMercancia(cid) {
       <label id="enFPagL">Flete<select id="enFPag" onchange="enPagoUI()"><option value="ya">Pagado ahora (sale de la cuenta)</option><option value="pend">Queda por pagar</option></select></label>
     </div>
     <div class="row" style="margin-top:12px;align-items:flex-end">
-      <label class="f grow">Producto<input id="enProd" list="dlProd2" placeholder="Nombre o código…" onchange="const p=pFind(this.value.trim());if(p)$('enCos').value=p.costo||''"></label>
+      <label class="f grow">Producto<input id="enProd" list="dlProd2" placeholder="Nombre o código…" onchange="const p=pFind(this.value.trim());if(p)$('enCos').value=p.costo?String(p.costo).replace('.', ','):''"></label>
       <label class="f" style="width:90px">Cant.<input id="enCant" type="number" min="1" value="24"></label>
-      <label class="f" style="width:120px">Costo unit.<input id="enCos" type="number" min="0"></label>
+      <label class="f" style="width:120px">Costo unit.<input id="enCos" type="text" inputmode="decimal" placeholder="Ej: 7298,93"></label>
       <button class="btn acc" onclick="enAdd()">Agregar</button>
     </div>
     <div style="margin-top:6px"><button class="btn sm sec" onclick="enNuevoProd()">＋ Producto nuevo</button> <span class="small mut">si no está en la lista, créalo aquí sin salir de la entrada</span></div>
@@ -1509,10 +1509,14 @@ function enPagoUI() {
   if ($('enFPagL')) $('enFPagL').style.display = tr ? '' : 'none';
   if ($('enCtaL')) $('enCtaL').style.display = !cr || (fl && tr && $('enFPag').value === 'ya') ? '' : 'none';
 }
-function enFlete() { const f = +($('enFlete') && $('enFlete').value) || 0; return f > 0 ? f : 0; }
+// Números como se escriben en Colombia: 7298,93 · 7.298,93 · 7298.93 (antes la coma multiplicaba el costo x100)
+const numIn = v => { const n = numCO(v); return n > 0 ? n : 0; };
+const r2 = n => Math.round(n * 100) / 100;   // costos unitarios con 2 decimales: así los subtotales cuadran con el total
+const fmtC = n => '$' + (+n || 0).toLocaleString('es-CO', { maximumFractionDigits: 2 });
+function enFlete() { return $('enFlete') ? numIn($('enFlete').value) : 0; }
 function enCostos() {
   const base = sum(ENT.lineas, l => l.cant * l.costo), f = enFlete(), k = base > 0 ? f / base : 0;
-  return ENT.lineas.map(l => ({ ...l, fleteU: Math.round(l.costo * k), final: Math.round(l.costo * (1 + k)) }));
+  return ENT.lineas.map(l => ({ ...l, fleteU: r2(l.costo * k), final: r2(l.costo * (1 + k)), sub: l.cant * l.costo * (1 + k) }));
 }
 function enNuevoProd() {
   const b = $('enNP'), v = $('enProd').value.trim(); b.style.display = b.style.display === 'none' ? '' : 'none';
@@ -1535,7 +1539,7 @@ function enCrearProd() {
   toast('✅ Producto ' + sku + ' creado · pon cantidad y costo y dale Agregar');
 }
 function enAdd() {
-  const p = pFind($('enProd').value.trim()), cant = parseInt($('enCant').value, 10), costo = +$('enCos').value;
+  const p = pFind($('enProd').value.trim()), cant = parseInt($('enCant').value, 10), costo = numIn($('enCos').value);
   if (!p) return toast('Selecciona un producto de la lista');
   if (!(cant > 0) || !(costo > 0)) return toast('Cantidad y costo deben ser mayores a 0');
   ENT.lineas.push({ pid: p.id, cant, costo }); $('enProd').value = ''; $('enCos').value = ''; $('enProd').focus(); enRender();
@@ -1543,7 +1547,7 @@ function enAdd() {
 function enRender() {
   const LC = enCostos(), flete = enFlete(), base = sum(ENT.lineas, l => l.cant * l.costo);
   enPagoUI();
-  $('enBody').innerHTML = `<div class="tw"><table><thead><tr><th>Producto</th><th class="n">Cant.</th><th class="n">Costo factura</th>${flete ? '<th class="n">+ Flete c/u</th><th class="n">Costo final</th>' : ''}<th class="n">Subtotal</th><th></th></tr></thead><tbody>${LC.map((l, i) => { const p = P(l.pid); return `<tr><td style="white-space:normal">${esc(p.nombre)}${l.final !== p.costo ? `<div class="small" style="color:var(--warn)">Costo anterior ${fmt(p.costo)} → margen ${p.precio ? ((p.precio - l.final) / p.precio * 100).toFixed(0) : 0}%</div>` : ''}</td><td class="n"><input type="number" min="1" value="${l.cant}" style="width:70px;text-align:right" onchange="ENT.lineas[${i}].cant=Math.max(1,parseInt(this.value,10)||1);enRender()"></td><td class="n"><input type="number" min="0" step="any" value="${l.costo}" style="width:100px;text-align:right" onchange="if(+this.value>0)ENT.lineas[${i}].costo=+this.value;enRender()"></td>${flete ? `<td class="n">${fmt(l.fleteU)}</td><td class="n"><b>${fmt(l.final)}</b></td>` : ''}<td class="n">${fmt(l.cant * l.final)}</td><td><button class="btn sm sec" onclick="ENT.lineas.splice(${i},1);enRender()">✕</button></td></tr>`; }).join('') || `<tr><td colspan="${flete ? 7 : 5}" class="mut">Agrega los productos de la factura del proveedor.</td></tr>`}</tbody></table></div>
+  $('enBody').innerHTML = `<div class="tw"><table><thead><tr><th>Producto</th><th class="n">Cant.</th><th class="n">Costo factura</th>${flete ? '<th class="n">+ Flete c/u</th><th class="n">Costo final</th>' : ''}<th class="n">Subtotal</th><th></th></tr></thead><tbody>${LC.map((l, i) => { const p = P(l.pid); return `<tr><td style="white-space:normal">${esc(p.nombre)}${l.final !== p.costo ? `<div class="small" style="color:var(--warn)">Costo anterior ${fmt(p.costo)} → margen ${p.precio ? ((p.precio - l.final) / p.precio * 100).toFixed(0) : 0}%</div>` : ''}</td><td class="n"><input type="number" min="1" value="${l.cant}" style="width:70px;text-align:right" onchange="ENT.lineas[${i}].cant=Math.max(1,parseInt(this.value,10)||1);enRender()"></td><td class="n"><input type="text" inputmode="decimal" value="${String(l.costo).replace('.', ',')}" style="width:100px;text-align:right" onchange="const v=numIn(this.value);if(v>0)ENT.lineas[${i}].costo=v;enRender()"></td>${flete ? `<td class="n">${fmtC(l.fleteU)}</td><td class="n"><b>${fmtC(l.final)}</b></td>` : ''}<td class="n">${fmt(l.sub)}</td><td><button class="btn sm sec" onclick="ENT.lineas.splice(${i},1);enRender()">✕</button></td></tr>`; }).join('') || `<tr><td colspan="${flete ? 7 : 5}" class="mut">Agrega los productos de la factura del proveedor.</td></tr>`}</tbody></table></div>
   ${flete ? `<div class="tot" style="max-width:300px;margin-left:auto"><span>Mercancía</span><span>${fmt(base)}</span></div><div class="tot" style="max-width:300px;margin-left:auto"><span>Flete</span><span>${fmt(flete)}</span></div>` : ''}
   <div class="tot big" style="max-width:300px;margin-left:auto"><span>Total compra</span><span>${fmt(base + flete)}</span></div>
   <div class="mfoot"><button class="btn sec" onclick="closeModal()">Cancelar</button><button class="btn" id="btnEnt" onclick="guardarEntrada()">${ENT.edit ? 'Guardar cambios' : 'Guardar entrada'}</button></div>`;
