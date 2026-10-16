@@ -734,7 +734,11 @@ function datosVacios() {
 <script>
 /* =================== APP DEL VENDEDOR =================== */
 const LS_SES = PFX + 'sesion_vendedor';
-let VID = lsGet(LS_SES, null), VIEW = 'inicio', PREV = null;
+// La sesión vive solo mientras la app/pestaña está abierta: al cerrarla y volver a abrir pide clave otra vez.
+const sesGet = () => { try { return JSON.parse(sessionStorage.getItem(LS_SES)); } catch (e) { return null; } };
+const sesSet = v => { try { v == null ? sessionStorage.removeItem(LS_SES) : sessionStorage.setItem(LS_SES, JSON.stringify(v)); } catch (e) {} };
+lsSet(LS_SES, null);   // borra la sesión permanente que guardaban las versiones anteriores
+let VID = sesGet(), VIEW = 'inicio', PREV = null;
 const LS_BORR = () => PFX + 'borrador_' + VID;
 let CART = null;
 const yo = () => V(VID);
@@ -795,11 +799,11 @@ function entrar() {
   const u = $('lgU').value.trim().toLowerCase(), c = $('lgC').value;
   const v = vendedores().find(x => x.usuario.toLowerCase() === u && x.clave === c && x.activo !== false);
   if (!v) return toast('Usuario o clave incorrectos');
-  VID = v.id; lsSet(LS_SES, VID); PREV = null; vigilarCambios(); VIEW = 'inicio'; render();
+  VID = v.id; sesSet(VID); PREV = null; vigilarCambios(); VIEW = 'inicio'; render();
 }
 function salir(silencio) {
   if (!silencio && !confirm('¿Cerrar sesión en este equipo?')) return;
-  VID = null; lsSet(LS_SES, null); CART = null; render();
+  VID = null; sesSet(null); CART = null; render();
 }
 
 /* ---------- INICIO ---------- */
