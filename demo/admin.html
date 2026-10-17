@@ -87,6 +87,8 @@ td.n,th.n{text-align:right}
 .pcard .acts{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
 .modal{position:fixed;inset:0;background:rgba(30,15,25,.5);display:flex;align-items:flex-start;justify-content:center;padding:24px 12px;z-index:50;overflow-y:auto}
 .modal.hidden{display:none}
+@keyframes sacudir{0%,100%{transform:translateX(0)}20%,60%{transform:translateX(-8px)}40%,80%{transform:translateX(8px)}}
+.mbox.sacude{animation:sacudir .35s}
 .mbox{background:#fff;border-radius:14px;width:100%;max-width:640px;box-shadow:0 20px 50px rgba(0,0,0,.25)}
 .mbox.wide{max-width:920px}
 .mhead{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--line);gap:10px}
@@ -172,7 +174,7 @@ td.n,th.n{text-align:right}
   <button data-v="equipo" onclick="go('equipo')">👥 Equipo y ajustes</button>
 </nav>
 <main id="app"></main>
-<div id="modal" class="modal hidden" onclick="if(event.target===this)closeModal()">
+<div id="modal" class="modal hidden" onclick="if(event.target===this)avisoModal()">
   <div class="mbox" id="mbox"><div class="mhead"><h3 id="mTitle"></h3><button onclick="closeModal()">×</button></div><div class="mbody" id="mBody"></div></div>
 </div>
 <div id="toast"></div>
@@ -430,6 +432,9 @@ function pedirRender() {
 document.addEventListener('focusout', () => setTimeout(() => { if (renderPend) pedirRender(); }, 60));
 function openModal(title, html, wide) { $('mTitle').textContent = title; $('mBody').innerHTML = html; $('mbox').classList.toggle('wide', !!wide); $('modal').classList.remove('hidden'); }
 function closeModal() { $('modal').classList.add('hidden'); if (renderPend) pedirRender(); }
+// Un clic por fuera de la ventana no la cierra (antes se perdía lo digitado). Se cierra solo con × o Cancelar.
+function avisoModal() { const b = $('mbox'); b.classList.remove('sacude'); void b.offsetWidth; b.classList.add('sacude'); toast('Para cerrar usa × o Cancelar'); }
+window.addEventListener('beforeunload', e => { if ($('modal') && !$('modal').classList.contains('hidden')) { e.preventDefault(); e.returnValue = ''; } });
 const modalAbierto = () => !$('modal').classList.contains('hidden');
 
 /* ---------- REGLAS DE NEGOCIO ---------- */
@@ -449,8 +454,36 @@ const brutoDe = o => sum(lineasDe(o), l => l.cant * l.precio);
 const calcTotal = (lineas, desc) => Math.round(sum(lineas, l => l.cant * l.precio) * (1 - (desc || 0) / 100));
 // Precios por volumen: productos/{pid}/escalas = [{desde, precio}]. Aplica por línea según la cantidad pedida.
 const escalasDe = p => (p && p.escalas ? vals(p.escalas) : []).filter(e => e && e.desde > 1 && e.precio > 0).sort((a, b) => a.desde - b.desde);
-function precioPara(p, cant) { let pr = p ? p.precio : 0; escalasDe(p).forEach(e => { if (cant >= e.desde) pr = e.precio; }); return pr; }
-const escalasTxt = p => escalasDe(p).map(e => `${e.desde}+ und ${fmt(e.precio)}`).join(' · ');
+/* PRESENTACIÓN DE VENTA (docena, caja, tira…)
+   Inventario, costo, precio y cantidades de los pedidos se guardan SIEMPRE por UNIDAD.
+   p.factor = unidades por presentación (1 = se vende por unidad), p.presNom = nombre (Docena, Caja…),
+   p.suelto = también se vende suelto, p.precioSuelto = precio de la unidad suelta.
+   La presentación solo cambia cómo se muestra y cómo se pide (el + suma una docena). */
+const factorDe = p => Math.max(1, parseInt(p && p.factor, 10) || 1);
+const ABREV_PRES = { Docena: 'doc', Caja: 'cj', Paquete: 'paq', Tira: 'tira', Display: 'disp', Bulto: 'bulto', Sixpack: 'six' };
+function presDe(p) {
+  const f = factorDe(p); if (f === 1) return { f, nom: 'Unidad', ab: 'und' };
+  const nom = (p.presNom || (f === 12 ? 'Docena' : 'Caja')).trim();
+  return { f, nom, ab: ABREV_PRES[nom] || nom.toLowerCase().slice(0, 4) };
+}
+const fmtCant = (p, n) => { const { f, ab } = presDe(p); n = +n || 0; if (f === 1) return n + ' und'; const q = Math.floor(n / f), r = n % f; return [q ? q + ' ' + ab : '', r ? r + ' und' : ''].filter(Boolean).join(' + ') || '0 ' + ab; };
+const precioPres = p => Math.round((p ? p.precio : 0) * factorDe(p));   // precio de la docena/caja
+// Precio por unidad para una cantidad: escalas por volumen y, si hay unidades sueltas, esas van a su precio aparte (promedio por unidad).
+function precioPara(p, cant) {
+  let pr = p ? p.precio : 0; escalasDe(p).forEach(e => { if (cant >= e.desde) pr = e.precio; });
+  const f = factorDe(p), r = f > 1 ? cant % f : 0;
+  if (r && p.suelto && +p.precioSuelto > 0) pr = Math.round(((cant - r) * pr + r * p.precioSuelto) / cant * 100) / 100;
+  return pr;
+}
+// Texto de cantidad × precio de una línea: "2 doc × $36.000" o "1 doc + 3 und · $3.100 c/u"
+function lineaTxt(p, l) {
+  const f = factorDe(p);
+  if (f > 1 && l.cant % f === 0) return `${fmtCant(p, l.cant)} × ${fmt(l.precio * f)}`;
+  return `${fmtCant(p, l.cant)} × ${fmt(l.precio)}${f > 1 ? ' c/u' : ''}`;
+}
+const precioDoc = (p, l) => factorDe(p) > 1 && l.cant % factorDe(p) === 0 ? `${fmt(l.precio * factorDe(p))}<span style="font-size:.8em;opacity:.7">/${presDe(p).ab}</span>` : fmt(l.precio);
+const escalasTxt = p => { const { f, ab } = presDe(p); return escalasDe(p).map(e => f > 1 && e.desde % f === 0 ? `${e.desde / f}+ ${ab} ${fmt(e.precio * f)}` : `${e.desde}+ und ${fmt(e.precio)}`).join(' · '); };
+
 const sigEscala = (p, cant) => escalasDe(p).find(e => e.desde > cant);
 function saldoPedido(o) { if (o.pago !== 'credito' || !VALIDOS.includes(o.estado)) return 0; return Math.max(0, o.total - pagado(o)); }
 const pedidosCliente = cid => pedidos().filter(o => o.clienteId === cid && VALIDOS.includes(o.estado));
@@ -477,7 +510,7 @@ function barsH(items, max) {
 function textoPedido(o) {
   const c = C(o.clienteId);
   let t = `*${EMPRESA}*\nPedido ${numPedido(o)} · ${fFecha(o.fecha)}${o.factura ? '\nFactura ' + o.factura.num : ''}\nCliente: ${c.nombre}\n\n`;
-  lineasDe(o).forEach(l => t += `• ${l.cant} x ${P(l.pid).nombre} = ${fmt(l.cant * l.precio)}\n`);
+  lineasDe(o).forEach(l => t += `• ${fmtCant(P(l.pid), l.cant)} x ${P(l.pid).nombre} = ${fmt(l.cant * l.precio)}\n`);
   if (o.desc) t += `\nDescuento ${o.desc}%`;
   t += `\n*Total: ${fmt(o.total)}*\nPago: ${o.pago === 'credito' ? 'Crédito' + (o.vence ? ', vence ' + fFecha(o.vence) : '') : 'Contado'}\n¡Gracias por su compra!`;
   return t;
@@ -726,7 +759,7 @@ let VIEW = 'aprobar', PREV_AP = null, NUEVOS = new Set();
 const TITULO = document.title;
 
 RENDER = render;
-iniciarDatos(origen => { vigilar(); if (origen === 'remoto') pedirRender(); else RENDER(); });
+setTimeout(() => iniciarDatos(origen => { vigilar(); if (origen === 'remoto') pedirRender(); else RENDER(); }), 0);   // arranca con todo el script cargado
 
 function vigilar() {
   if (!DB.pedidos && !DB.config) return;
@@ -813,7 +846,7 @@ function vInicio() {
     <div class="card"><h3>Ventas del mes por vendedor</h3>${barsH(venItems)}</div>
     <div class="card"><h3>Ventas del mes por municipio</h3>${barsH(Object.entries(porMun).map(([l, v]) => ({ l, v })).sort((a, b) => b.v - a.v))}</div>
     <div class="card"><h3>Productos más vendidos (30 días)</h3>${barsH(topProd)}</div>
-    <div class="card"><h3>📦 Stock bajo el mínimo</h3><div class="list">${productos().filter(p => p.stock <= p.min).map(p => `<div class="it"><span class="b ${p.stock === 0 ? 'bad' : 'warn'}">${p.stock} und</span><div class="x"><b>${esc(p.nombre)}</b><span class="small mut">Mínimo ${p.min}</span></div></div>`).join('') || '<p class="mut">Todo por encima del mínimo.</p>'}</div></div>
+    <div class="card"><h3>📦 Stock bajo el mínimo</h3><div class="list">${productos().filter(p => p.stock <= p.min).map(p => `<div class="it"><span class="b ${p.stock === 0 ? 'bad' : 'warn'}">${fmtCant(p, p.stock)}</span><div class="x"><b>${esc(p.nombre)}</b><span class="small mut">Mínimo ${fmtCant(p, p.min)}</span></div></div>`).join('') || '<p class="mut">Todo por encima del mínimo.</p>'}</div></div>
   </div>`;
 }
 
@@ -860,7 +893,7 @@ function revRender() {
     </div>
     ${o.nota ? `<div class="alert info">📝 Nota del vendedor: ${esc(o.nota)}</div>` : ''}
     <div class="tw rev"><table><thead><tr><th>Producto</th><th class="n">Pedido</th><th class="n">Stock</th><th class="n">A facturar</th><th class="n">Precio</th><th class="n">Subtotal</th></tr></thead><tbody>
-      ${REV.lineas.map((l, i) => { const p = P(l.pid); return `<tr><td style="white-space:normal">${esc(p.nombre)}<div class="small mut">${esc(p.sku)}</div></td><td class="n">${l.pedido}</td><td class="n"><span class="b ${p.stock >= l.pedido ? 'ok' : p.stock ? 'warn' : 'bad'}">${p.stock}</span></td><td class="n"><input type="number" min="0" max="${p.stock}" value="${l.cant}" onchange="revCant(${i},this.value)"></td><td class="n">${fmt(l.precio)}${l.precio < p.precio ? '<div class="small" style="color:var(--ok)">x volumen</div>' : ''}</td><td class="n">${fmt(l.cant * l.precio)}</td></tr>`; }).join('')}
+      ${REV.lineas.map((l, i) => { const p = P(l.pid); return `<tr><td style="white-space:normal">${esc(p.nombre)}<div class="small mut">${esc(p.sku)}</div></td><td class="n">${fmtCant(p, l.pedido)}</td><td class="n"><span class="b ${p.stock >= l.pedido ? 'ok' : p.stock ? 'warn' : 'bad'}">${fmtCant(p, p.stock)}</span></td><td class="n"><input type="number" min="0" max="${p.stock}" value="${l.cant}" onchange="revCant(${i},this.value)">${factorDe(p) > 1 ? `<div class="small mut">und = ${fmtCant(p, l.cant)}</div>` : ''}</td><td class="n">${precioDoc(p, l)}${l.precio < p.precio ? '<div class="small" style="color:var(--ok)">x volumen</div>' : ''}</td><td class="n">${fmt(l.cant * l.precio)}</td></tr>`; }).join('')}
     </tbody></table></div>
     <div class="row" style="margin-top:12px;align-items:flex-start;justify-content:space-between">
       <div class="fg" style="flex:1 1 300px">
@@ -904,7 +937,7 @@ async function facturar() {
   $('btnFac').disabled = true;
   let n; try { n = await siguiente('fac'); } catch (e) { $('btnFac').disabled = false; return toast(e.message); }
   const T = TODAY();
-  const ajustes = REV.lineas.filter(l => l.cant !== l.pedido).map(l => `${P(l.pid).nombre}: ${l.pedido}→${l.cant}`).join('; ');
+  const ajustes = REV.lineas.filter(l => l.cant !== l.pedido).map(l => `${P(l.pid).nombre}: ${fmtCant(P(l.pid), l.pedido)}→${fmtCant(P(l.pid), l.cant)}`).join('; ');
   const upd = {
     [`pedidos/${o.id}/estado`]: 'facturado',
     [`pedidos/${o.id}/lineas`]: lineas.map(l => ({ pid: l.pid, cant: l.cant, precio: l.precio, costo: P(l.pid) ? P(l.pid).costo : 0 })),
@@ -967,7 +1000,7 @@ function alistamiento() {
     ${vis.map(o => { const c = C(o.clienteId); return `<tr><td><input type="checkbox" style="width:auto" ${ALI.sel[o.id] ? 'checked' : ''} onchange="ALI.sel['${o.id}']=this.checked;alistamiento()"></td><td>${o.factura.num}</td><td>${esc(c.nombre)}</td><td>${esc(c.municipio)}</td><td>${o.pago === 'contado' ? '<span class="b warn">Cobrar</span>' : 'Crédito'}</td><td class="n">${sum(lineasDe(o), l => l.cant)}</td><td class="n">${fmt(o.total)}</td></tr>`; }).join('') || '<tr><td colspan="7" class="mut">No hay facturas por despachar.</td></tr>'}
     </tbody></table></div>
     <h3 style="margin-top:14px">Lista de alistamiento consolidada (${items.length} referencias · ${sum(items, i => i.q)} unidades)</h3>
-    <div class="tw"><table><thead><tr><th></th><th>Código</th><th>Producto</th><th class="n">Cantidad</th></tr></thead><tbody>${items.map(i => `<tr><td style="padding:4px 8px">${htmlFoto(i.p, 'sm')}</td><td>${esc(i.p.sku)}</td><td style="white-space:normal">${esc(i.p.nombre)}</td><td class="n"><b>${i.q}</b></td></tr>`).join('')}</tbody></table></div>
+    <div class="tw"><table><thead><tr><th></th><th>Código</th><th>Producto</th><th class="n">Cantidad</th></tr></thead><tbody>${items.map(i => `<tr><td style="padding:4px 8px">${htmlFoto(i.p, 'sm')}</td><td>${esc(i.p.sku)}</td><td style="white-space:normal">${esc(i.p.nombre)}</td><td class="n"><b>${fmtCant(i.p, i.q)}</b>${factorDe(i.p) > 1 ? `<div class="small mut">${i.q} und</div>` : ''}</td></tr>`).join('')}</tbody></table></div>
     <div class="mfoot"><button class="btn sec" ${sel.length ? '' : 'disabled'} onclick="imprimirAlist()">🖨 Imprimir alistamiento y planilla</button><button class="btn acc" ${sel.length ? '' : 'disabled'} onclick="despacharSel()">🚚 Marcar ${sel.length} como despachadas</button></div>`, true);
 }
 function imprimirAlist() {
@@ -978,7 +1011,7 @@ function imprimirAlist() {
   const contado = sel.filter(o => o.pago === 'contado');
   $('print').innerHTML = `<div class="doc">
     <div class="hd"><div><h1>${esc(EMPRESA)}</h1><div>Lista de alistamiento</div></div><div style="text-align:right"><b>${esc(ruta)}</b><br>${fFecha(TODAY())} · ${sel.length} facturas</div></div>
-    <table><thead><tr><th>✓</th><th>Código</th><th>Producto</th><th>Categoría</th><th style="text-align:right">Cantidad</th></tr></thead><tbody>${items.map(i => `<tr><td>☐</td><td>${esc(i.p.sku)}</td><td>${esc(i.p.nombre)}</td><td>${esc(i.p.cat)}</td><td style="text-align:right"><b>${i.q}</b></td></tr>`).join('')}</tbody></table>
+    <table><thead><tr><th>✓</th><th>Código</th><th>Producto</th><th>Categoría</th><th style="text-align:right">Cantidad</th></tr></thead><tbody>${items.map(i => `<tr><td>☐</td><td>${esc(i.p.sku)}</td><td>${esc(i.p.nombre)}</td><td>${esc(i.p.cat)}</td><td style="text-align:right"><b>${fmtCant(i.p, i.q)}</b>${factorDe(i.p) > 1 ? ` <span style="color:#777">(${i.q} und)</span>` : ''}</td></tr>`).join('')}</tbody></table>
     <p><b>Total unidades:</b> ${sum(items, i => i.q)}</p>
     <div class="firmas"><div>Alistó</div><div>Revisó</div></div>
     <div style="page-break-before:always"></div>
@@ -1006,14 +1039,14 @@ function verPedido(id, recienFacturado, recienDespachado) {
     ${o.motivo ? `<div class="alert bad">Motivo: ${esc(o.motivo)}</div>` : ''}
     ${o.ajustado ? `<div class="alert warn">Cantidades ajustadas al facturar: ${esc(o.ajustado)}</div>` : ''}
     ${o.nota ? `<div class="alert info">📝 ${esc(o.nota)}</div>` : ''}
-    <div class="tw"><table><thead><tr><th>Producto</th><th class="n">Cant.</th><th class="n">Precio</th><th class="n">Subtotal</th></tr></thead><tbody>${lineasDe(o).map(l => `<tr><td style="white-space:normal">${esc(P(l.pid).nombre)}</td><td class="n">${l.cant}</td><td class="n">${fmt(l.precio)}</td><td class="n">${fmt(l.cant * l.precio)}</td></tr>`).join('')}</tbody></table></div>
+    <div class="tw"><table><thead><tr><th>Producto</th><th class="n">Cant.</th><th class="n">Precio</th><th class="n">Subtotal</th></tr></thead><tbody>${lineasDe(o).map(l => `<tr><td style="white-space:normal">${esc(P(l.pid).nombre)}</td><td class="n">${fmtCant(P(l.pid), l.cant)}</td><td class="n">${precioDoc(P(l.pid), l)}</td><td class="n">${fmt(l.cant * l.precio)}</td></tr>`).join('')}</tbody></table></div>
     <div style="max-width:320px;margin-left:auto;margin-top:10px">
       <div class="tot"><span>Subtotal</span><span>${fmt(bruto)}</span></div>
       ${o.desc ? `<div class="tot"><span>Descuento ${o.desc}%</span><span>−${fmt(bruto - o.total)}</span></div>` : ''}
       <div class="tot big"><span>Total</span><span>${fmt(o.total)}</span></div>
       ${o.pago === 'credito' && VALIDOS.includes(o.estado) ? `<div class="tot"><span>Abonado</span><span>${fmt(pagado(o))}</span></div>${reportado(o) ? `<div class="tot" style="color:var(--warn)"><span>Reportado por confirmar</span><span>${fmt(reportado(o))}</span></div>` : ''}<div class="tot" style="font-weight:700;color:${saldo ? 'var(--bad)' : 'var(--ok)'}"><span>Saldo</span><span>${saldo ? fmt(saldo) : 'Pagado ✓'}</span></div>` : ''}
     </div>
-    ${abonos(o).length ? `<h3 style="margin-top:14px">Abonos</h3><div class="list">${abonos(o).sort((a, b) => a.fecha.localeCompare(b.fecha)).map(a => `<div class="it"><span class="b ${a.confirmado ? 'ok' : 'warn'}">${a.confirmado ? 'Confirmado' : 'Por confirmar'}</span><div class="x"><b>${fmt(a.valor)} · ${a.medio}</b><span class="small mut">${fFecha(a.fecha)}${a.reportadoPor ? ' · reportó ' + esc(V(a.reportadoPor).nombre) : ''}</span></div></div>`).join('')}</div>` : ''}
+    ${abonos(o).length ? `<h3 style="margin-top:14px">Abonos</h3><div class="list">${abonos(o).sort((a, b) => a.fecha.localeCompare(b.fecha)).map(a => `<div class="it"><span class="b ${a.confirmado ? 'ok' : 'warn'}">${a.confirmado ? 'Confirmado' : 'Por confirmar'}</span><div class="x"><b>${fmt(a.valor)} · ${a.medio}</b><span class="small mut">${fFecha(a.fecha)}${a.reportadoPor ? ' · reportó ' + esc(V(a.reportadoPor).nombre) : ''}</span></div>${a.confirmado && o.estado !== 'anulado' ? `<button class="btn sm sec" onclick="reversarAbono('${o.id}','${a.id}')">Reversar</button>` : ''}</div>`).join('')}</div>` : ''}
     <div class="mfoot">
       ${!['anulado', 'rechazado', 'por_aprobar'].includes(o.estado) ? `<button class="btn bad" onclick="estado('${o.id}','anulado')">Anular</button>` : ''}
       ${o.factura && o.estado !== 'anulado' ? `<button class="btn sec" onclick="imprimirVenta('${o.id}')">🖨 Documento de venta</button><button class="btn sec" onclick="imprimir('${o.id}')">🖨 Remisión</button>` : ''}
@@ -1041,7 +1074,7 @@ function docRemision(o) {
     <div class="hd"><div style="display:flex;align-items:center;gap:10px">${logoDoc(52)}<div><h1>${esc(EMPRESA)}</h1><div>Remisión de despacho</div></div></div><div style="text-align:right"><b>${o.factura.num}</b><br>Fecha: ${fFecha(o.factura.fecha)}<br>${o.factura.externa ? 'Fact. electrónica: ' + esc(o.factura.externa) + '<br>' : ''}Pedido: ${numPedido(o)}</div></div>
     <p><b>Cliente:</b> ${esc(c.nombre)} · ${esc(c.contacto)} · Tel. ${esc(c.tel)}<br><b>Dirección:</b> ${esc(c.barrio)}, ${esc(c.municipio)}<br><b>Vendedor:</b> ${esc(V(o.vendedorId).nombre)} · <b>Pago:</b> ${o.pago === 'credito' ? 'Crédito, vence ' + fFecha(o.vence) : 'Contado'}</p>
     <table><thead><tr><th>Código</th><th>Producto</th><th style="text-align:right">Cant.</th><th style="text-align:right">Precio</th><th style="text-align:right">Subtotal</th></tr></thead><tbody>
-    ${lineasDe(o).map(l => `<tr><td>${esc(P(l.pid).sku)}</td><td>${esc(P(l.pid).nombre)}</td><td style="text-align:right">${l.cant}</td><td style="text-align:right">${fmt(l.precio)}</td><td style="text-align:right">${fmt(l.cant * l.precio)}</td></tr>`).join('')}</tbody></table>
+    ${lineasDe(o).map(l => `<tr><td>${esc(P(l.pid).sku)}</td><td>${esc(P(l.pid).nombre)}</td><td style="text-align:right">${fmtCant(P(l.pid), l.cant)}</td><td style="text-align:right">${precioDoc(P(l.pid), l)}</td><td style="text-align:right">${fmt(l.cant * l.precio)}</td></tr>`).join('')}</tbody></table>
     <div style="width:260px;margin-left:auto;margin-top:8px"><div class="tot"><span>Subtotal</span><span>${fmt(bruto)}</span></div>${o.desc ? `<div class="tot"><span>Descuento ${o.desc}%</span><span>−${fmt(bruto - o.total)}</span></div>` : ''}<div class="tot big"><span>Total</span><span>${fmt(o.total)}</span></div></div>
     ${o.nota ? `<p><b>Nota:</b> ${esc(o.nota)}</p>` : ''}
     <div class="firmas"><div>Despachó</div><div>Recibí conforme (firma y sello)</div></div>
@@ -1074,7 +1107,7 @@ function imprimirVenta(id) {
       ${cel('Dirección', `${esc(c.barrio)}, ${esc(c.municipio)}`)}${cel('Vendedor', esc(V(o.vendedorId).nombre))}${cel('Referencia DIAN', esc(o.factura.externa || '—'))}</tr></table>
     <table style="width:100%;border-collapse:collapse"><thead><tr style="background:#eee">
       <th style="${B};padding:5px;width:26px">#</th><th style="${B};padding:5px">Ref.</th><th style="${B};padding:5px">Detalle</th><th style="${B};padding:5px;text-align:right">Cant.</th><th style="${B};padding:5px;text-align:right">Vr. unit</th><th style="${B};padding:5px;text-align:right">Vr. total</th></tr></thead><tbody>
-      ${ls.map((l, i) => `<tr><td style="${B};padding:4px;text-align:center">${i + 1}</td><td style="${B};padding:4px">${esc(P(l.pid).sku)}</td><td style="${B};padding:4px">${esc(P(l.pid).nombre)}</td><td style="${B};padding:4px;text-align:right">${l.cant}</td><td style="${B};padding:4px;text-align:right">${fmt(l.precio)}</td><td style="${B};padding:4px;text-align:right">${fmt(l.cant * l.precio)}</td></tr>`).join('')}
+      ${ls.map((l, i) => `<tr><td style="${B};padding:4px;text-align:center">${i + 1}</td><td style="${B};padding:4px">${esc(P(l.pid).sku)}</td><td style="${B};padding:4px">${esc(P(l.pid).nombre)}</td><td style="${B};padding:4px;text-align:right">${fmtCant(P(l.pid), l.cant)}</td><td style="${B};padding:4px;text-align:right">${precioDoc(P(l.pid), l)}</td><td style="${B};padding:4px;text-align:right">${fmt(l.cant * l.precio)}</td></tr>`).join('')}
     </tbody></table>
     <div style="margin-top:6px"><b>Observaciones:</b> ${cred ? 'CRÉDITO · vence ' + fFecha(o.vence) : 'CONTADO'}${o.nota ? ' · ' + esc(o.nota) : ''}</div>
     <table style="width:100%;border-collapse:collapse;margin-top:10px"><tr>
@@ -1093,7 +1126,7 @@ function imprimirVenta(id) {
 const FC = { q: '', mun: '', est: '', ven: '' };
 function vClientes() {
   $('app').innerHTML = `
-  <div class="row between"><h2>Clientes</h2><button class="btn" onclick="formCliente()">+ Nuevo cliente</button></div>
+  <div class="row between"><h2>Clientes</h2><div class="row"><button class="btn sec" onclick="importarClientes()">⬆ Importar desde Excel</button><button class="btn" onclick="formCliente()">+ Nuevo cliente</button></div></div>
   <div class="row" style="margin-bottom:12px">
     <input class="grow" placeholder="Buscar por nombre, contacto o teléfono…" value="${esc(FC.q)}" oninput="FC.q=this.value;tablaClientes()">
     <select style="width:auto" onchange="FC.mun=this.value;tablaClientes()"><option value="">Todos los municipios</option>${MUNICIPIOS.map(m => `<option ${FC.mun === m ? 'selected' : ''}>${m}</option>`).join('')}</select>
@@ -1147,7 +1180,8 @@ function formCliente(cid, pr) {
       <label>Nombre del negocio<input id="fcNom" value="${esc(c.nombre)}"></label>
       <label>Tipo<select id="fcTipo">${TIPOS_CLIENTE.map(t => `<option ${c.tipo === t ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
       <label>Persona de contacto<input id="fcCon" value="${esc(c.contacto)}"></label>
-      <label>Celular / WhatsApp<input id="fcTel" value="${esc(c.tel)}"></label>
+      <label>Celular / WhatsApp <span class="small mut">(opcional)</span><input id="fcTel" value="${esc(c.tel)}"></label>
+      <label>NIT / cédula <span class="small mut">(opcional)</span><input id="fcNit" value="${esc(c.nit || '')}"></label>
       <label>Municipio<select id="fcMun">${MUNICIPIOS.map(m => `<option ${c.municipio === m ? 'selected' : ''}>${m}</option>`).join('')}</select></label>
       <label>Barrio / dirección<input id="fcBar" value="${esc(c.barrio || '')}"></label>
       <label>Vendedor asignado<select id="fcVen">${vendedores().map(v => `<option value="${v.id}" ${c.vendedorId === v.id ? 'selected' : ''}>${esc(v.nombre)} (${esc(v.zona)})</option>`).join('')}</select></label>
@@ -1162,7 +1196,8 @@ function formCliente(cid, pr) {
 function guardarCliente(cid, prId) {
   const d = { nombre: $('fcNom').value.trim(), tipo: $('fcTipo').value, contacto: $('fcCon').value.trim(), tel: $('fcTel').value.replace(/\D/g, ''), municipio: $('fcMun').value, barrio: $('fcBar').value.trim(), vendedorId: $('fcVen').value, plazo: +$('fcPla').value, cupo: +$('fcCupo').value || 0, dias: [...document.querySelectorAll('.fcDia:checked')].map(x => +x.value) };
   if (!d.nombre) return toast('Escribe el nombre del negocio');
-  if (d.tel.length !== 10) return toast('El celular debe tener 10 dígitos');
+  if (d.tel && d.tel.length !== 10) return toast('El celular debe tener 10 dígitos (o déjalo vacío)');
+  d.nit = $('fcNit').value.trim();
   if (!d.vendedorId) return toast('Crea primero un vendedor en Equipo');
   if (d.plazo && !d.cupo) return toast('Asigna un cupo para clientes a crédito');
   if (!d.plazo) d.cupo = 0;
@@ -1171,6 +1206,65 @@ function guardarCliente(cid, prId) {
   else upd['clientes/' + id] = { id, ...d, creado: TODAY() };
   if (prId) upd['prospectos/' + prId] = null;
   guardar(upd); render(); ficha(id); toast('Cliente guardado');
+}
+
+/* ---------- IMPORTAR CLIENTES (copiar y pegar desde Excel) ---------- */
+// Encabezados reconocidos: NIT, Cliente (persona), Nombre Comercial (negocio), Dirección, Barrio, Teléfono/Celular, Municipio, Tipo.
+// El negocio = Nombre Comercial; si está vacío, el nombre del cliente. No se repiten clientes con el mismo NIT o nombre.
+let IMPC = null;
+function importarClientes() {
+  if (!vendedores().length) return toast('Crea primero un vendedor en Equipo y ajustes');
+  IMPC = { filas: [] };
+  openModal('Importar clientes desde Excel', `
+    <div class="small mut">1. En Excel selecciona la tabla <b>con la fila de títulos</b> (NIT, Cliente, Nombre Comercial, Dirección, Barrio, Teléfono…) y cópiala (Ctrl+C).<br>2. Elige vendedor, municipio y días de visita para este grupo.<br>3. Pega abajo (Ctrl+V), revisa y dale <b>Importar</b>.</div>
+    <div class="fg" style="margin-top:10px">
+      <label>Vendedor<select id="icVen">${vendedores().map(v => `<option value="${v.id}">${esc(v.nombre)} (${esc(v.zona)})</option>`).join('')}</select></label>
+      <label>Municipio (si no viene en la tabla)<select id="icMun">${MUNICIPIOS.map(m => `<option>${m}</option>`).join('')}</select></label>
+      <label>Tipo (si no viene)<select id="icTipo">${TIPOS_CLIENTE.map(t => `<option>${t}</option>`).join('')}</select></label>
+    </div>
+    <div class="small" style="margin-top:10px;font-weight:600;color:var(--mut)">Días de visita para este grupo (opcional)</div>
+    <div class="row" style="gap:14px;margin-top:4px">${[1, 2, 3, 4, 5, 6].map(d => `<label class="small" style="display:flex;gap:4px;align-items:center"><input type="checkbox" class="icDia" value="${d}" style="width:auto">${DIAS[d]}</label>`).join('')}</div>
+    <textarea id="icTxt" style="min-height:130px;margin-top:10px;font-family:monospace;font-size:12px" placeholder="Pega aquí…" oninput="icLeer()"></textarea>
+    <div id="icPrev" style="margin-top:10px"></div>`, true);
+  setTimeout(() => $('icTxt') && $('icTxt').focus(), 50);
+}
+function icLeer() {
+  const lineas = $('icTxt').value.replace(/\r/g, '').split('\n').filter(l => l.trim()), out = $('icPrev'); IMPC.filas = [];
+  if (!lineas.length) { out.innerHTML = ''; return; }
+  const hi = lineas.findIndex(l => l.split('\t').some(c => ['cliente', 'nombrecomercial', 'nombre', 'negocio'].includes(normH(c))));
+  if (hi < 0) { out.innerHTML = '<div class="alert bad">No encuentro la fila de títulos. Copia la tabla incluyendo los títulos (debe haber una columna "Cliente" o "Nombre Comercial").</div>'; return; }
+  const H = lineas[hi].split('\t').map(normH), col = (...ks) => H.findIndex(h => ks.some(k => h === k || h.startsWith(k)));
+  const ix = { nit: col('nit', 'cedula', 'documento'), cli: col('cliente', 'nombre', 'contacto'), com: col('nombrecomercial', 'negocio', 'razonsocial'), dir: col('direccion'), bar: col('barrio'), tel: col('telefono', 'celular', 'whatsapp'), mun: col('municipio', 'ciudad'), tipo: col('tipo') };
+  if (ix.com === ix.cli) ix.com = -1;
+  const existe = new Set(clientes().flatMap(c => [c.nit ? 'n:' + c.nit : null, 'x:' + c.nombre.toLowerCase()]).filter(Boolean)), vistos = new Set();
+  const lim = t => String(t || '').replace(/\s+/g, ' ').trim(), sinB = t => lim(t).replace(/^(B\/|BARRIO|BRR)\s*/i, '');
+  lineas.slice(hi + 1).forEach(l => {
+    const c = l.split('\t'), g = k => ix[k] >= 0 ? lim(c[ix[k]]) : '';
+    const persona = g('cli'), negocio = g('com') || persona; if (!negocio) return;
+    const nit = g('nit').replace(/[^\dKk-]/g, ''), tel = g('tel').replace(/\D/g, '').slice(-10);
+    const mun = MUNICIPIOS.find(m => m.toLowerCase() === g('mun').toLowerCase()) || $('icMun').value;
+    const tipo = TIPOS_CLIENTE.find(t => t.toLowerCase() === g('tipo').toLowerCase()) || $('icTipo').value;
+    const errs = [], k1 = nit ? 'n:' + nit : null, k2 = 'x:' + negocio.toLowerCase();
+    if ((k1 && existe.has(k1)) || existe.has(k2)) errs.push('ya existe');
+    else if ((k1 && vistos.has(k1)) || vistos.has(k2)) errs.push('repetido en la lista');
+    if (tel && tel.length !== 10) errs.push('celular inválido');
+    if (k1) vistos.add(k1); vistos.add(k2);
+    IMPC.filas.push({ nombre: negocio, contacto: persona !== negocio ? persona : '', nit, tel: tel.length === 10 ? tel : '', barrio: sinB(g('dir') || g('bar')), municipio: mun, tipo, errs });
+  });
+  const ok = IMPC.filas.filter(f => !f.errs.length), mal = IMPC.filas.length - ok.length;
+  out.innerHTML = `<div class="row" style="gap:6px;margin-bottom:8px"><span class="b ok">${ok.length} para importar</span>${mal ? `<span class="b bad">${mal} no se importan</span>` : ''}</div>
+    <div class="tw" style="max-height:300px;overflow:auto"><table><thead><tr><th>Negocio</th><th>Contacto</th><th>NIT</th><th>Barrio / dirección</th><th>Cel.</th><th>Estado</th></tr></thead><tbody>
+    ${IMPC.filas.map(f => `<tr><td>${esc(f.nombre)}</td><td>${esc(f.contacto) || '—'}</td><td>${esc(f.nit) || '—'}</td><td style="white-space:normal;min-width:200px">${esc(f.barrio)}</td><td>${f.tel || '—'}</td><td>${f.errs.length ? `<span class="b bad">${f.errs.join(', ')}</span>` : '<span class="b ok">OK</span>'}</td></tr>`).join('')}
+    </tbody></table></div>
+    <div class="mfoot"><button class="btn sec" onclick="closeModal()">Cancelar</button><button class="btn" ${ok.length ? '' : 'disabled'} onclick="icGuardar()">Importar ${ok.length} clientes</button></div>`;
+}
+function icGuardar() {
+  const ok = IMPC.filas.filter(f => !f.errs.length); if (!ok.length) return;
+  const ven = $('icVen').value, dias = [...document.querySelectorAll('.icDia:checked')].map(x => +x.value);
+  if (!confirm(`¿Importar ${ok.length} clientes para ${V(ven).nombre}?`)) return;
+  const upd = {}; let n = 0;
+  ok.forEach(f => { const id = uid('C') + (n++); upd['clientes/' + id] = { id, nombre: f.nombre, tipo: f.tipo, contacto: f.contacto, tel: f.tel, nit: f.nit, municipio: f.municipio, barrio: f.barrio, vendedorId: ven, plazo: 0, cupo: 0, dias, creado: TODAY() }; });
+  guardar(upd); closeModal(); render(); toast(`✅ ${ok.length} clientes importados`);
 }
 
 /* ---------- RUTAS Y COBERTURA ---------- */
@@ -1247,20 +1341,27 @@ function tablaInv() {
   const q = FI.q.toLowerCase().trim(), lim = addDays(TODAY(), -30), rot = {}, comp = {};
   pedidos().forEach(o => { if (VALIDOS.includes(o.estado) && o.fecha >= lim) lineasDe(o).forEach(l => rot[l.pid] = (rot[l.pid] || 0) + l.cant); if (o.estado === 'por_aprobar') lineasDe(o).forEach(l => comp[l.pid] = (comp[l.pid] || 0) + l.cant); });
   const rows = productos().filter(p => (!q || (p.sku + ' ' + p.nombre).toLowerCase().includes(q)) && (!FI.cat || p.cat === FI.cat) && (!FI.bajo || p.stock <= p.min) && (!FI.nofoto || !p.foto));
-  $('tbInv').innerHTML = rows.map(p => { const mg = (p.precio - p.costo) / p.precio * 100, r = rot[p.id] || 0, dias = r ? Math.round(p.stock / (r / 30)) : null; return `<tr class="clk" onclick="formProducto('${p.id}')"><td style="padding:5px 8px">${htmlFoto(p, 'sm')}</td><td>${esc(p.sku)}</td><td style="white-space:normal;min-width:200px"><b>${esc(p.nombre)}</b></td><td class="small">${esc(p.cat)}</td><td class="n"><span class="b ${p.stock === 0 ? 'bad' : p.stock <= p.min ? 'warn' : 'ok'}">${p.stock}</span></td><td class="n">${comp[p.id] ? `<span style="color:${comp[p.id] > p.stock ? 'var(--bad)' : 'inherit'}">${comp[p.id]}</span>` : '—'}</td><td class="n">${p.min}</td><td class="n">${fmt(p.costo)}</td><td class="n">${fmt(p.precio)}${escalasDe(p).length ? `<div class="small" style="color:var(--ok)">${escalasDe(p).length} escala${escalasDe(p).length > 1 ? 's' : ''}</div>` : ''}</td><td class="n">${mg.toFixed(0)}%</td><td class="n">${r} und<div class="small mut">${dias != null ? 'alcanza ~' + dias + ' días' : 'sin movimiento'}</div></td></tr>`; }).join('') || '<tr><td colspan="11" class="mut">Sin resultados.</td></tr>';
+  $('tbInv').innerHTML = rows.map(p => { const mg = (p.precio - p.costo) / p.precio * 100, r = rot[p.id] || 0, dias = r ? Math.round(p.stock / (r / 30)) : null; return `<tr class="clk" onclick="formProducto('${p.id}')"><td style="padding:5px 8px">${htmlFoto(p, 'sm')}</td><td>${esc(p.sku)}</td><td style="white-space:normal;min-width:200px"><b>${esc(p.nombre)}</b></td><td class="small">${esc(p.cat)}</td><td class="n"><span class="b ${p.stock === 0 ? 'bad' : p.stock <= p.min ? 'warn' : 'ok'}">${fmtCant(p, p.stock)}</span></td><td class="n">${comp[p.id] ? `<span style="color:${comp[p.id] > p.stock ? 'var(--bad)' : 'inherit'}">${fmtCant(p, comp[p.id])}</span>` : '—'}</td><td class="n">${p.min}</td><td class="n">${factorDe(p) > 1 ? fmt(p.costo * factorDe(p)) + '<div class="small mut">/' + presDe(p).ab + '</div>' : fmt(p.costo)}</td><td class="n">${factorDe(p) > 1 ? fmt(precioPres(p)) + '<div class="small mut">/' + presDe(p).ab + ' x ' + factorDe(p) + '</div>' : fmt(p.precio)}${escalasDe(p).length ? `<div class="small" style="color:var(--ok)">${escalasDe(p).length} escala${escalasDe(p).length > 1 ? 's' : ''}</div>` : ''}</td><td class="n">${p.costo > 0 ? mg.toFixed(0) + '%' : '<span class="small mut">sin costo</span>'}</td><td class="n">${r} und<div class="small mut">${dias != null ? 'alcanza ~' + dias + ' días' : 'sin movimiento'}</div></td></tr>`; }).join('') || '<tr><td colspan="11" class="mut">Sin resultados.</td></tr>';
 }
 function formProducto(pid) {
-  const p = pid ? P(pid) : { sku: '', nombre: '', cat: 'Cremas para peinar', costo: 0, precio: 0, min: 12, stock: 0 };
+  const p = pid ? P(pid) : { sku: '', nombre: '', cat: 'Cremas para peinar', costo: '', precio: '', min: '', stock: 0 };
   const cats = [...new Set([...Object.keys(ICONO_CAT), ...productos().map(x => x.cat), p.cat].filter(Boolean))].sort((a, b) => a.localeCompare(b));
   openModal(pid ? 'Editar producto' : 'Nuevo producto', `
     ${pid ? `<div class="row" style="align-items:center;gap:14px;margin-bottom:14px">${htmlFoto(p, 'big" style="width:120px;margin:0;font-size:44px')}<div class="row" style="gap:8px"><label class="btn acc btnfile sm">📷 ${p.foto ? 'Cambiar foto' : 'Subir foto'}<input type="file" accept="image/*" onchange="fotoAdmin('${pid}',this)"></label>${p.foto ? `<button class="btn sec sm" onclick="if(confirm('¿Quitar la foto?')){quitarFoto('${pid}');formProducto('${pid}');render()}">Quitar</button>` : ''}${p.foto ? `<div class="small mut" style="width:100%">Subida el ${new Date(p.foto).toLocaleDateString('es-CO')}${p.fotoPor ? ' por ' + esc(p.fotoPor) : ''}</div>` : ''}</div></div>` : '<div class="small mut" style="margin-bottom:10px">Guarda el producto y luego ábrelo para agregarle la foto.</div>'}
-    <div class="fg"><label>Código<input id="fpSku" value="${esc(p.sku)}"></label><label>Categoría<select id="fpCat" onchange="$('fpCatN').style.display = this.value === '__nueva' ? '' : 'none'; if (this.value === '__nueva') $('fpCatN').focus()">${cats.map(c => `<option value="${esc(c)}" ${c === p.cat ? 'selected' : ''}>${esc(c)}</option>`).join('')}<option value="__nueva">➕ Nueva categoría…</option></select><input id="fpCatN" placeholder="Nombre de la nueva categoría" style="display:none;margin-top:6px"></label></div>
+    <div class="fg"><label>Código <span class="small mut">(opcional)</span><input id="fpSku" value="${esc(p.sku)}" placeholder="Se genera solo si lo dejas vacío"></label><label>Categoría<select id="fpCat" onchange="$('fpCatN').style.display = this.value === '__nueva' ? '' : 'none'; if (this.value === '__nueva') $('fpCatN').focus()">${cats.map(c => `<option value="${esc(c)}" ${c === p.cat ? 'selected' : ''}>${esc(c)}</option>`).join('')}<option value="__nueva">➕ Nueva categoría…</option></select><input id="fpCatN" placeholder="Nombre de la nueva categoría" style="display:none;margin-top:6px"></label></div>
     <label class="f" style="margin-top:10px">Nombre / descripción<input id="fpNomP" value="${esc(p.nombre)}"></label>
+    <div class="card" style="margin:10px 0 0;padding:10px 12px;background:#faf7f9">
+      <div class="fg"><label>Se vende por<select id="fpPres" onchange="presUI()">${PRES_OPC.map(o => `<option ${o === presDe(p).nom ? 'selected' : ''}>${o}</option>`).join('')}${PRES_OPC.includes(presDe(p).nom) ? '' : `<option selected>${esc(presDe(p).nom)}</option>`}</select></label>
+        <label id="fpFacL">Unidades por <span class="fpPN"></span><input id="fpFac" type="number" min="2" value="${factorDe(p) > 1 ? factorDe(p) : 12}" onchange="presUI()"></label></div>
+      <label id="fpSuelL" class="small" style="display:flex;gap:6px;align-items:center;margin-top:8px"><input type="checkbox" id="fpSuel" style="width:auto" ${p.suelto ? 'checked' : ''} onchange="presUI()"> También se vende suelto (por unidad)</label>
+      <label id="fpPSuL" class="f" style="margin-top:6px">Precio de la unidad suelta<input id="fpPSu" inputmode="decimal" value="${p.precioSuelto || ''}" placeholder="Ej: 3500"></label>
+      <div class="small mut" id="fpPresAy" style="margin-top:6px"></div>
+    </div>
     <div class="fg" style="margin-top:10px">
-      <label>Costo<input id="fpCos" type="number" min="0" value="${p.costo}" oninput="margenPrev()"></label>
-      <label>Precio mayorista<input id="fpPre" type="number" min="0" value="${p.precio}" oninput="margenPrev()"></label>
-      <label>Stock mínimo<input id="fpMin" type="number" min="0" value="${p.min}"></label>
-      ${pid ? `<label>Stock actual<input value="${p.stock}" disabled></label>` : `<label>Stock inicial<input id="fpSto" type="number" min="0" value="0"></label>`}
+      <label><span id="fpCosT">Costo</span> ${pid ? '' : '<span class="small mut">(opcional · se toma de la factura)</span>'}<input id="fpCos" type="number" min="0" step="any" value="${p.costo ? Math.round(p.costo * factorDe(p) * 100) / 100 : ''}" placeholder="Se llena con la entrada de mercancía" oninput="margenPrev()"></label>
+      <label><span id="fpPreT">Precio mayorista</span><input id="fpPre" type="number" min="0" step="any" value="${p.precio ? Math.round(p.precio * factorDe(p) * 100) / 100 : ''}" oninput="margenPrev()"></label>
+      <label>Stock mínimo <span class="small mut">(unidades · opcional)</span><input id="fpMin" type="number" min="0" value="${p.min || ''}" placeholder="Para alertas de reposición"></label>
+      ${pid ? `<label>Stock actual <a href="#" onclick="event.preventDefault();ajustarStock('${pid}')" style="font-weight:600">· Ajustar</a><input value="${fmtCant(p, p.stock)}${factorDe(p) > 1 ? ' (' + p.stock + ' und)' : ''}" disabled></label>` : `<label>Stock inicial <span class="small mut">(unidades · opcional)</span><input id="fpSto" type="number" min="0" value="" placeholder="Normalmente entra con la compra"></label>`}
     </div>
     <div class="small mut" id="mgPrev" style="margin-top:8px"></div>
     <h3 style="margin:14px 0 4px">Precios por cantidad <span class="small mut" style="font-weight:400">(opcional)</span></h3>
@@ -1269,6 +1370,26 @@ function formProducto(pid) {
     <div class="small mut" id="esPrev" style="margin-top:6px"></div>
     ${pid ? '<div class="small mut" style="margin-top:4px">El stock cambia con facturas, anulaciones y entradas de mercancía.</div>' : ''}
     <div class="mfoot"><button class="btn sec" onclick="closeModal()">Cancelar</button><button class="btn" onclick="guardarProducto('${pid || ''}')">Guardar</button></div>`);
+  FP_F = factorDe(p); presUI();
+}
+// Presentación en el formulario: costo y precio se escriben POR PRESENTACIÓN (ej. por docena) y se guardan por unidad.
+const PRES_OPC = ['Unidad', 'Docena', 'Caja', 'Paquete', 'Tira', 'Display', 'Bulto'];
+let FP_F = 1;
+function fpFactor() { const n = $('fpPres').value; return n === 'Unidad' ? 1 : n === 'Docena' ? 12 : Math.max(2, parseInt($('fpFac').value, 10) || 0); }
+function presUI() {
+  const n = $('fpPres').value, f = fpFactor(), u = f > 1, nm = n.toLowerCase();
+  if (n === 'Docena') $('fpFac').value = 12;
+  $('fpFacL').style.display = u && n !== 'Docena' ? '' : 'none';
+  $('fpSuelL').style.display = u ? 'flex' : 'none';
+  $('fpPSuL').style.display = u && $('fpSuel').checked ? '' : 'none';
+  document.querySelectorAll('.fpPN').forEach(x => x.textContent = nm);
+  if (f !== FP_F) {   // cambió la presentación: se convierten los valores escritos para que el precio por unidad no cambie
+    ['fpCos', 'fpPre'].forEach(id => { const v = +$(id).value; if (v > 0) $(id).value = Math.round(v * f / FP_F * 100) / 100; });
+    FP_F = f;
+  }
+  $('fpCosT').textContent = u ? 'Costo por ' + nm : 'Costo';
+  $('fpPreT').textContent = u ? 'Precio por ' + nm : 'Precio mayorista';
+  $('fpPresAy').textContent = u ? `El inventario, la factura del proveedor y los precios por cantidad van en UNIDADES. El vendedor y el catálogo verán "${n} x ${f}" y el + sumará ${f} unidades.` : '';
   margenPrev();
 }
 async function fotoAdmin(pid, input) {
@@ -1278,8 +1399,9 @@ async function fotoAdmin(pid, input) {
   catch (e) { toast(e.message); }
 }
 function margenPrev() {
-  const c = +$('fpCos').value, p = +$('fpPre').value; $('mgPrev').textContent = p > 0 ? `Margen ${((p - c) / p * 100).toFixed(1)}% · ganancia por unidad ${fmt(p - c)}` : '';
-  const es = leerEscalas(); if ($('esPrev')) $('esPrev').textContent = es.map(e => `${e.desde}+ und: margen ${((e.precio - c) / e.precio * 100).toFixed(1)}%`).join(' · ');
+  const f = $('fpPres') ? fpFactor() : 1, nm = f > 1 ? $('fpPres').value.toLowerCase() : 'unidad';
+  const c = +$('fpCos').value, p = +$('fpPre').value; $('mgPrev').textContent = !(p > 0) ? '' : (c > 0 ? `Margen ${((p - c) / p * 100).toFixed(1)}% · ganancia por ${nm} ${fmt(p - c)}` : 'Costo pendiente: el margen se calcula cuando ingreses la factura de compra.') + (f > 1 ? ` · por unidad: ${fmt(p / f)}` : '');
+  const cu = c / f, es = leerEscalas(); if ($('esPrev')) $('esPrev').textContent = c > 0 ? es.map(e => `${e.desde}+ und: margen ${((e.precio - cu) / e.precio * 100).toFixed(1)}%`).join(' · ') : '';
 }
 function leerEscalas() {
   const d = [...document.querySelectorAll('.fpEsD')], pr = [...document.querySelectorAll('.fpEsP')];
@@ -1289,9 +1411,21 @@ function guardarProducto(pid) {
   const cat = $('fpCat').value === '__nueva' ? $('fpCatN').value.trim() : $('fpCat').value;
   if (!cat) return toast('Escribe el nombre de la nueva categoría');
   const d = { sku: $('fpSku').value.trim().toUpperCase(), cat, nombre: $('fpNomP').value.trim(), costo: +$('fpCos').value, precio: +$('fpPre').value, min: +$('fpMin').value || 0 };
-  if (!d.sku || !d.nombre) return toast('Código y nombre son obligatorios');
+  if (!d.nombre) return toast('Escribe el nombre del producto');
+  const fF = fpFactor(), fN = $('fpPres').value;
+  if (fF > 1 && !(parseInt($('fpFac').value, 10) >= 2)) return toast('Escribe cuántas unidades trae la ' + fN.toLowerCase());
+  d.costo = d.costo > 0 ? r2(d.costo / fF) : 0; d.precio = d.precio > 0 ? r2(d.precio / fF) : 0;   // se guarda por UNIDAD
+  d.factor = fF > 1 ? fF : null; d.presNom = fF > 1 ? fN : null;
+  d.suelto = fF > 1 && $('fpSuel').checked ? true : null;
+  d.precioSuelto = d.suelto ? (numIn($('fpPSu').value) || null) : null;
+  if (d.suelto && !d.precioSuelto) return toast('Escribe el precio de la unidad suelta'); // sin costo: queda pendiente hasta la primera entrada de mercancía
+  if (!(d.precio > 0)) return toast('Escribe el precio de venta');
+  if (!d.sku) { // código automático: P0001, P0002… el siguiente libre
+    const usados = new Set(productos().map(x => x.sku)); let n = productos().length + 1;
+    while (usados.has('P' + pad(n, 4))) n++;
+    d.sku = 'P' + pad(n, 4);
+  }
   if (productos().some(x => x.sku === d.sku && x.id !== pid)) return toast('Ya existe un producto con ese código');
-  if (!(d.precio > 0)) return toast('El precio debe ser mayor a 0');
   if (d.precio < d.costo && !confirm('El precio es menor que el costo. ¿Guardar igual?')) return;
   const es = leerEscalas();
   for (let i = 0; i < es.length; i++) {
@@ -1370,15 +1504,16 @@ function impGuardar() {
 }
 let ENT = null;
 const pFind = v => productos().find(x => v === x.sku + ' · ' + x.nombre) || productos().find(x => x.sku.toLowerCase() === v.toLowerCase());
-function entradaMercancia() {
-  ENT = { lineas: [] };
-  const prov = (DB.config.proveedores || []);
-  openModal('Entrada de mercancía (compra a proveedor)', `
+function entradaMercancia(cid) {
+  const ce = cid ? DB.compras[cid] : null;   // con cid: editar una compra ya registrada
+  ENT = { lineas: ce ? (ce.lineas || []).filter(l => P(l.pid)).map(l => ({ pid: l.pid, cant: l.cant, costo: l.costoFactura != null ? l.costoFactura : l.costo })) : [], edit: ce ? cid : null };
+  const prov = nombresProveedores();
+  openModal(ce ? 'Editar compra ' + cid : 'Entrada de mercancía (compra a proveedor)', `
     <div class="fg">
-      <label>Proveedor<input id="enProv" list="dlProv" value="${esc(prov[0] || '')}"><datalist id="dlProv">${prov.map(p => `<option value="${esc(p)}">`).join('')}</datalist></label>
+      <label>Proveedor<input id="enProv" list="dlProv" value="${esc(prov[0] || '')}" onchange="enProvSel()"><datalist id="dlProv">${prov.map(p => `<option value="${esc(p)}">`).join('')}</datalist></label>
       <label>N° factura proveedor<input id="enFacP"></label>
       <label>Fecha<input id="enFec" type="date" value="${TODAY()}"></label>
-      <label>Flete pagado ($)<input id="enFlete" type="number" min="0" value="" placeholder="0" oninput="enRender()"></label>
+      <label>Flete pagado ($)<input id="enFlete" type="text" inputmode="decimal" value="" placeholder="0" oninput="enRender()"></label>
     </div>
     <div class="small mut" style="margin-top:6px">El flete se reparte entre los productos según su valor y queda sumado al costo de cada uno.</div>
     <div class="fg" style="margin-top:10px">
@@ -1392,17 +1527,42 @@ function entradaMercancia() {
       <label id="enFPagL">Flete<select id="enFPag" onchange="enPagoUI()"><option value="ya">Pagado ahora (sale de la cuenta)</option><option value="pend">Queda por pagar</option></select></label>
     </div>
     <div class="row" style="margin-top:12px;align-items:flex-end">
-      <label class="f grow">Producto<input id="enProd" list="dlProd2" placeholder="Nombre o código…" onchange="const p=pFind(this.value.trim());if(p)$('enCos').value=p.costo"></label>
+      <label class="f grow">Producto<input id="enProd" list="dlProd2" placeholder="Nombre o código…" onchange="const p=pFind(this.value.trim());if(p)$('enCos').value=p.costo?String(p.costo).replace('.', ','):''"></label>
       <label class="f" style="width:90px">Cant.<input id="enCant" type="number" min="1" value="24"></label>
-      <label class="f" style="width:120px">Costo unit.<input id="enCos" type="number" min="0"></label>
+      <label class="f" style="width:120px">Costo unit.<input id="enCos" type="text" inputmode="decimal" placeholder="Ej: 7298,93"></label>
       <button class="btn acc" onclick="enAdd()">Agregar</button>
     </div>
-    <datalist id="dlProd2">${productos().map(p => `<option value="${esc(p.sku + ' · ' + p.nombre)}">Stock ${p.stock} · mín ${p.min}</option>`).join('')}</datalist>
+    <div style="margin-top:6px"><button class="btn sm sec" onclick="enNuevoProd()">＋ Producto nuevo</button> <span class="small mut">si no está en la lista, créalo aquí sin salir de la entrada</span></div>
+    <div id="enNP" class="card" style="display:none;margin-top:8px;padding:12px">
+      <div class="fg">
+        <label>Nombre del producto<input id="enNPn" placeholder="Ej: GEL VIBRANTE FAWY X 370"></label>
+        <label>Precio de venta<input id="enNPp" type="number" min="1" inputmode="numeric"></label>
+        <label>Categoría<select id="enNPc">${[...new Set([...Object.keys(ICONO_CAT), ...productos().map(x => x.cat)].filter(Boolean))].sort((a, b) => a.localeCompare(b)).map(c => `<option>${esc(c)}</option>`).join('')}</select></label>
+        <label>Código <span class="small mut">(opcional)</span><input id="enNPs" placeholder="Se genera solo"></label>
+      </div>
+      <div class="small mut" style="margin-top:6px">El costo lo toma de esta factura. Stock mínimo, foto y escalas los puedes poner después en Inventario.</div>
+      <div class="row" style="margin-top:8px;justify-content:flex-end"><button class="btn sm sec" onclick="$('enNP').style.display='none'">Cancelar</button><button class="btn sm ok" onclick="enCrearProd()">✓ Crear y seleccionar</button></div>
+    </div>
+    <datalist id="dlProd2">${productos().map(p => `<option value="${esc(p.sku + ' · ' + p.nombre)}">Stock ${fmtCant(p, p.stock)} · mín ${p.min}</option>`).join('')}</datalist>
     <div id="enBody" style="margin-top:12px"></div>`, true);
   $('enProd').addEventListener('keydown', e => { if (e.key === 'Enter') enAdd(); });
+  if (ce) {
+    $('enProv').value = ce.proveedor || ''; $('enFacP').value = ce.facturaProv || ''; $('enFec').value = ce.fecha || TODAY();
+    $('enFlete').value = +ce.flete || ''; $('enCond').value = ce.condicion === 'credito' ? 'credito' : 'contado'; $('enPlazo').value = ce.plazo || 30;
+    $('enFMod').value = ce.fleteModo || 'transportadora'; $('enTr').value = ce.transportadora || '';
+    $('enFPag').value = movs().some(m => m.compraId === cid && m.tipo === 'pago_flete') ? 'ya' : 'pend';
+    const pc = movs().find(m => m.compraId === cid); if (pc && cuentas().includes(pc.cuenta)) $('enCta').value = pc.cuenta;
+    $('enBody').insertAdjacentHTML('beforebegin', `<div class="alert info" style="margin-top:10px">Puedes cambiar cantidades, costos, flete, proveedor, factura y fecha. El inventario y el costo de los productos se corrigen solos con la diferencia. Pagos registrados a esta compra: <b>${fmt(sum(movs().filter(m => m.compraId === cid), m => m.valor))}</b>.</div>`);
+  } else enProvSel();
   enRender();
 }
 // Reparte el flete proporcional al valor de cada línea y devuelve el costo unitario final (costo + flete por unidad)
+// Al elegir proveedor: si tiene plazo de crédito guardado, la compra arranca a crédito con ese plazo
+function enProvSel() {
+  const pv = provPorNombre($('enProv').value.trim()); if (!pv || !$('enCond')) return;
+  if (+pv.plazo > 0) { $('enCond').value = 'credito'; $('enPlazo').value = pv.plazo; } else $('enCond').value = 'contado';
+  enPagoUI();
+}
 function enPagoUI() {
   const cr = $('enCond') && $('enCond').value === 'credito', fl = enFlete() > 0, tr = $('enFMod') && $('enFMod').value === 'transportadora';
   if ($('enPlazoL')) $('enPlazoL').style.display = cr ? '' : 'none';
@@ -1411,13 +1571,37 @@ function enPagoUI() {
   if ($('enFPagL')) $('enFPagL').style.display = tr ? '' : 'none';
   if ($('enCtaL')) $('enCtaL').style.display = !cr || (fl && tr && $('enFPag').value === 'ya') ? '' : 'none';
 }
-function enFlete() { const f = +($('enFlete') && $('enFlete').value) || 0; return f > 0 ? f : 0; }
+// Números como se escriben en Colombia: 7298,93 · 7.298,93 · 7298.93 (antes la coma multiplicaba el costo x100)
+const numIn = v => { const n = numCO(v); return n > 0 ? n : 0; };
+const r2 = n => Math.round(n * 100) / 100;   // costos unitarios con 2 decimales: así los subtotales cuadran con el total
+const fmtC = n => '$' + (+n || 0).toLocaleString('es-CO', { maximumFractionDigits: 2 });
+function enFlete() { return $('enFlete') ? numIn($('enFlete').value) : 0; }
 function enCostos() {
   const base = sum(ENT.lineas, l => l.cant * l.costo), f = enFlete(), k = base > 0 ? f / base : 0;
-  return ENT.lineas.map(l => ({ ...l, fleteU: Math.round(l.costo * k), final: Math.round(l.costo * (1 + k)) }));
+  return ENT.lineas.map(l => ({ ...l, fleteU: r2(l.costo * k), final: r2(l.costo * (1 + k)), sub: l.cant * l.costo * (1 + k) }));
+}
+function enNuevoProd() {
+  const b = $('enNP'), v = $('enProd').value.trim(); b.style.display = b.style.display === 'none' ? '' : 'none';
+  if (b.style.display === '' ) { if (v && !pFind(v)) $('enNPn').value = v; $('enNPn').focus(); }
+}
+function enCrearProd() {
+  const nombre = $('enNPn').value.trim().replace(/\s+/g, ' '), precio = +$('enNPp').value, cat = $('enNPc').value || 'Otros';
+  let sku = $('enNPs').value.trim().toUpperCase();
+  if (!nombre) return toast('Escribe el nombre del producto');
+  if (!(precio > 0)) return toast('Escribe el precio de venta');
+  if (productos().some(x => x.nombre.toLowerCase() === nombre.toLowerCase()) && !confirm('Ya existe un producto llamado "' + nombre + '". ¿Crear otro igual?')) return;
+  if (!sku) { const usados = new Set(productos().map(x => x.sku)); let n = productos().length + 1; while (usados.has('P' + pad(n, 4))) n++; sku = 'P' + pad(n, 4); }
+  if (productos().some(x => x.sku === sku)) return toast('Ya existe un producto con ese código');
+  const id = uid('P');
+  guardar({ ['productos/' + id]: { id, sku, cat, nombre, costo: 0, precio, min: 0, escalas: null, stock: 0 } });
+  $('dlProd2').innerHTML = productos().map(p => `<option value="${esc(p.sku + ' · ' + p.nombre)}">Stock ${fmtCant(p, p.stock)} · mín ${p.min}</option>`).join('');
+  $('enProd').value = sku + ' · ' + nombre; $('enCos').value = '';
+  ['enNPn', 'enNPp', 'enNPs'].forEach(k => $(k).value = ''); $('enNP').style.display = 'none';
+  $('enCant').focus(); $('enCant').select();
+  toast('✅ Producto ' + sku + ' creado · pon cantidad y costo y dale Agregar');
 }
 function enAdd() {
-  const p = pFind($('enProd').value.trim()), cant = parseInt($('enCant').value, 10), costo = +$('enCos').value;
+  const p = pFind($('enProd').value.trim()), cant = parseInt($('enCant').value, 10), costo = numIn($('enCos').value);
   if (!p) return toast('Selecciona un producto de la lista');
   if (!(cant > 0) || !(costo > 0)) return toast('Cantidad y costo deben ser mayores a 0');
   ENT.lineas.push({ pid: p.id, cant, costo }); $('enProd').value = ''; $('enCos').value = ''; $('enProd').focus(); enRender();
@@ -1425,15 +1609,16 @@ function enAdd() {
 function enRender() {
   const LC = enCostos(), flete = enFlete(), base = sum(ENT.lineas, l => l.cant * l.costo);
   enPagoUI();
-  $('enBody').innerHTML = `<div class="tw"><table><thead><tr><th>Producto</th><th class="n">Cant.</th><th class="n">Costo factura</th>${flete ? '<th class="n">+ Flete c/u</th><th class="n">Costo final</th>' : ''}<th class="n">Subtotal</th><th></th></tr></thead><tbody>${LC.map((l, i) => { const p = P(l.pid); return `<tr><td style="white-space:normal">${esc(p.nombre)}${l.final !== p.costo ? `<div class="small" style="color:var(--warn)">Costo anterior ${fmt(p.costo)} → margen ${p.precio ? ((p.precio - l.final) / p.precio * 100).toFixed(0) : 0}%</div>` : ''}</td><td class="n">${l.cant}</td><td class="n">${fmt(l.costo)}</td>${flete ? `<td class="n">${fmt(l.fleteU)}</td><td class="n"><b>${fmt(l.final)}</b></td>` : ''}<td class="n">${fmt(l.cant * l.final)}</td><td><button class="btn sm sec" onclick="ENT.lineas.splice(${i},1);enRender()">✕</button></td></tr>`; }).join('') || `<tr><td colspan="${flete ? 7 : 5}" class="mut">Agrega los productos de la factura del proveedor.</td></tr>`}</tbody></table></div>
+  $('enBody').innerHTML = `<div class="tw"><table><thead><tr><th>Producto</th><th class="n">Cant.</th><th class="n">Costo factura</th>${flete ? '<th class="n">+ Flete c/u</th><th class="n">Costo final</th>' : ''}<th class="n">Subtotal</th><th></th></tr></thead><tbody>${LC.map((l, i) => { const p = P(l.pid); return `<tr><td style="white-space:normal">${esc(p.nombre)}${l.final !== p.costo ? `<div class="small" style="color:var(--warn)">Costo anterior ${fmt(p.costo)} → margen ${p.precio ? ((p.precio - l.final) / p.precio * 100).toFixed(0) : 0}%</div>` : ''}</td><td class="n"><input type="number" min="1" value="${l.cant}" style="width:70px;text-align:right" onchange="ENT.lineas[${i}].cant=Math.max(1,parseInt(this.value,10)||1);enRender()">${factorDe(p) > 1 ? `<div class="small mut">= ${fmtCant(p, l.cant)}</div>` : ''}</td><td class="n"><input type="text" inputmode="decimal" value="${String(l.costo).replace('.', ',')}" style="width:100px;text-align:right" onchange="const v=numIn(this.value);if(v>0)ENT.lineas[${i}].costo=v;enRender()"></td>${flete ? `<td class="n">${fmtC(l.fleteU)}</td><td class="n"><b>${fmtC(l.final)}</b></td>` : ''}<td class="n">${fmt(l.sub)}</td><td><button class="btn sm sec" onclick="ENT.lineas.splice(${i},1);enRender()">✕</button></td></tr>`; }).join('') || `<tr><td colspan="${flete ? 7 : 5}" class="mut">Agrega los productos de la factura del proveedor.</td></tr>`}</tbody></table></div>
   ${flete ? `<div class="tot" style="max-width:300px;margin-left:auto"><span>Mercancía</span><span>${fmt(base)}</span></div><div class="tot" style="max-width:300px;margin-left:auto"><span>Flete</span><span>${fmt(flete)}</span></div>` : ''}
   <div class="tot big" style="max-width:300px;margin-left:auto"><span>Total compra</span><span>${fmt(base + flete)}</span></div>
-  <div class="mfoot"><button class="btn sec" onclick="closeModal()">Cancelar</button><button class="btn" id="btnEnt" onclick="guardarEntrada()">Guardar entrada</button></div>`;
+  <div class="mfoot"><button class="btn sec" onclick="closeModal()">Cancelar</button><button class="btn" id="btnEnt" onclick="guardarEntrada()">${ENT.edit ? 'Guardar cambios' : 'Guardar entrada'}</button></div>`;
 }
 async function guardarEntrada() {
   const prov = $('enProv').value.trim();
   if (!prov) return toast('Escribe el proveedor');
   if (!ENT.lineas.length) return toast('Agrega al menos un producto');
+  if (ENT.edit) return guardarEdicionCompra(ENT.edit);
   $('btnEnt').disabled = true;
   let n; try { n = await siguiente('com'); } catch (e) { $('btnEnt').disabled = false; return toast(e.message); }
   const id = 'COM-' + pad(n, 4), upd = {}, sube = {};
@@ -1442,19 +1627,72 @@ async function guardarEntrada() {
   // Pago: contado sale de caja ya; crédito queda en cuentas por pagar. El flete a transportadora es un pago aparte.
   const fec = $('enFec').value || TODAY(), cond = $('enCond').value, plazo = Math.max(1, parseInt($('enPlazo').value, 10) || 30), cta = $('enCta').value;
   const fMod = flete ? $('enFMod').value : null, trans = flete && fMod === 'transportadora' ? ($('enTr').value.trim() || 'Transportadora') : null;
-  const merc = sum(LC, l => l.cant * l.costo), aProv = merc + (fMod === 'proveedor' ? flete : 0), fYa = flete && fMod === 'transportadora' && $('enFPag').value === 'ya';
+  const merc = Math.round(sum(LC, l => l.cant * l.costo)), aProv = merc + (fMod === 'proveedor' ? flete : 0), fYa = flete && fMod === 'transportadora' && $('enFPag').value === 'ya';
   const sale = (cond === 'contado' ? aProv : 0) + (fYa ? flete : 0);
   if (sale > 0 && saldoCuenta(cta) < sale && !confirm(`La cuenta ${cta} tiene ${fmt(saldoCuenta(cta))} y este pago es de ${fmt(sale)}. ¿Registrar igual? (quedará en negativo)`)) { $('btnEnt').disabled = false; return; }
   if (cond === 'contado') { const mid = uid('M'); upd['movimientos/' + mid] = { id: mid, tipo: 'pago_prov', fecha: fec, ts: Date.now(), cuenta: cta, valor: aProv, compraId: id, tercero: prov, desc: 'Pago de contado ' + id + ($('enFacP').value.trim() ? ' · fact. ' + $('enFacP').value.trim() : '') }; }
   if (fYa) { const mid = uid('M'); upd['movimientos/' + mid] = { id: mid, tipo: 'pago_flete', fecha: fec, ts: Date.now() + 1, cuenta: cta, valor: flete, compraId: id, tercero: trans, desc: 'Flete ' + id + ' · ' + trans }; }
   for (const pid in sube) upd[`productos/${pid}/stock`] = P(pid).stock + sube[pid];
-  upd['compras/' + id] = { id, fecha: $('enFec').value || TODAY(), proveedor: prov, facturaProv: $('enFacP').value.trim(), lineas: LC.map(l => ({ pid: l.pid, cant: l.cant, costo: l.final, costoFactura: l.costo })), flete, total: sum(LC, l => l.cant * l.costo) + flete, condicion: cond, plazo: cond === 'credito' ? plazo : 0, vence: cond === 'credito' ? addDays(fec, plazo) : fec, fleteModo: fMod, transportadora: trans };
+  upd['compras/' + id] = { id, fecha: $('enFec').value || TODAY(), proveedor: prov, facturaProv: $('enFacP').value.trim(), lineas: LC.map(l => ({ pid: l.pid, cant: l.cant, costo: l.final, costoFactura: l.costo, costoAnt: P(l.pid).costo })), flete, total: merc + flete, condicion: cond, plazo: cond === 'credito' ? plazo : 0, vence: cond === 'credito' ? addDays(fec, plazo) : fec, fleteModo: fMod, transportadora: trans };
   const provs = DB.config.proveedores || []; if (!provs.includes(prov)) upd['config/proveedores'] = [...provs, prov];
   guardar(upd); closeModal(); render(); toast('Entrada ' + id + ' registrada · stock actualizado');
 }
+// Editar compra: aplica solo la DIFERENCIA (stock, costo de productos y pagos automáticos) y guarda la versión anterior.
+function guardarEdicionCompra(cid) {
+  const c = DB.compras[cid]; if (!c || c.anulada) { closeModal(); return toast('Esa compra ya no se puede editar'); }
+  const prov = $('enProv').value.trim().replace(/\s+/g, ' ');
+  const LC = enCostos(), flete = enFlete(), fec = $('enFec').value || c.fecha || TODAY(), cond = $('enCond').value;
+  const plazo = Math.max(1, parseInt($('enPlazo').value, 10) || 30), cta = $('enCta').value;
+  const fMod = flete ? $('enFMod').value : null, trans = flete && fMod === 'transportadora' ? ($('enTr').value.trim() || 'Transportadora') : null;
+  const merc = Math.round(sum(LC, l => l.cant * l.costo)), aProv = merc + (fMod === 'proveedor' ? flete : 0);
+  const viejas = c.lineas || [], upd = {};
+  // Inventario: nueva cantidad − cantidad anterior, por producto
+  const qOld = {}, qNew = {}; viejas.forEach(l => qOld[l.pid] = (qOld[l.pid] || 0) + l.cant); LC.forEach(l => qNew[l.pid] = (qNew[l.pid] || 0) + l.cant);
+  const pids = [...new Set([...Object.keys(qOld), ...Object.keys(qNew)])].filter(pid => P(pid));
+  const falta = pids.filter(pid => P(pid).stock + (qNew[pid] || 0) - (qOld[pid] || 0) < 0);
+  if (falta.length) return alert('No se puede guardar: parte de esa mercancía ya se vendió.\n\n' + falta.map(pid => `${P(pid).nombre}: hay ${P(pid).stock}, quitarías ${(qOld[pid] || 0) - (qNew[pid] || 0)}`).join('\n') + '\n\nDeja esas cantidades como mínimo en lo que quedó, o corrige con "Ajustar stock".');
+  pids.forEach(pid => { const d = (qNew[pid] || 0) - (qOld[pid] || 0); if (d) upd[`productos/${pid}/stock`] = P(pid).stock + d; });
+  // Costo del producto: se corrige solo si no ha entrado otra compra después que lo haya cambiado
+  const vl = pid => viejas.filter(l => l.pid === pid).pop(), nl = pid => LC.filter(l => l.pid === pid).pop(), sinTocar = [];
+  pids.forEach(pid => {
+    const o = vl(pid), n = nl(pid), cur = P(pid).costo;
+    if (n && (!o || cur === o.costo)) { if (n.final !== cur) upd[`productos/${pid}/costo`] = n.final; }
+    else if (!n && o && cur === o.costo && o.costoAnt != null) upd[`productos/${pid}/costo`] = o.costoAnt;
+    else if (n && o && n.final !== o.costo) sinTocar.push(P(pid).nombre);
+  });
+  // Pagos automáticos (los que creó la entrada): se ajustan a la diferencia; los pagos hechos a mano no se tocan
+  const pagos = movs().filter(m => m.compraId === cid), now = Date.now();
+  const autoP = pagos.find(m => m.tipo === 'pago_prov' && String(m.desc || '').startsWith('Pago de contado'));
+  const pagadoP = sum(pagos.filter(m => m.tipo === 'pago_prov'), m => m.valor);
+  const avisos = [];
+  if (cond === 'contado') {
+    const d = aProv - pagadoP;
+    if (d && autoP && autoP.valor + d > 0) upd[`movimientos/${autoP.id}/valor`] = autoP.valor + d;
+    else if (d > 0) { const mid = uid('M'); upd['movimientos/' + mid] = { id: mid, tipo: 'pago_prov', fecha: fec, ts: now, cuenta: cta, valor: d, compraId: cid, tercero: prov, desc: 'Pago de contado ' + cid + ' (ajuste por edición)' }; }
+    else if (d < 0) avisos.push(`Al proveedor se le pagó ${fmt(-d)} de más (queda a favor).`);
+  } else if (autoP) {
+    if (!confirm(`La compra pasa a CRÉDITO: se borra el pago de contado de ${fmt(autoP.valor)} y la plata vuelve a ${autoP.cuenta}. Queda en cuentas por pagar. ¿Seguir?`)) return;
+    upd['movimientos/' + autoP.id] = null;
+  }
+  const pagF = pagos.filter(m => m.tipo === 'pago_flete'), pagadoF = sum(pagF, m => m.valor), autoF = pagF.find(m => String(m.desc || '').startsWith('Flete ' + cid));
+  if (fMod === 'transportadora' && $('enFPag').value === 'ya') {
+    const d = flete - pagadoF;
+    if (d && autoF && autoF.valor + d > 0) { upd[`movimientos/${autoF.id}/valor`] = autoF.valor + d; upd[`movimientos/${autoF.id}/tercero`] = trans; }
+    else if (d > 0) { const mid = uid('M'); upd['movimientos/' + mid] = { id: mid, tipo: 'pago_flete', fecha: fec, ts: now + 1, cuenta: cta, valor: d, compraId: cid, tercero: trans, desc: 'Flete ' + cid + ' · ' + trans }; }
+    else if (d < 0) avisos.push(`El flete se pagó ${fmt(-d)} de más.`);
+  } else if (autoF) upd['movimientos/' + autoF.id] = null;   // ya no hay flete aparte, o quedó por pagar
+  if (prov !== c.proveedor) pagos.filter(m => m.tipo === 'pago_prov' && m.tercero === c.proveedor && !upd['movimientos/' + m.id]).forEach(m => upd[`movimientos/${m.id}/tercero`] = prov);
+  const antes = { ts: now, proveedor: c.proveedor, facturaProv: c.facturaProv || '', fecha: c.fecha, total: c.total, flete: c.flete || 0, condicion: c.condicion || '', lineas: viejas.map(l => ({ pid: l.pid, cant: l.cant, costo: l.costoFactura != null ? l.costoFactura : l.costo })) };
+  const nuevo = { ...c, fecha: fec, proveedor: prov, facturaProv: $('enFacP').value.trim(), lineas: LC.map(l => { const o = vl(l.pid); return { pid: l.pid, cant: l.cant, costo: l.final, costoFactura: l.costo, costoAnt: o && o.costoAnt != null ? o.costoAnt : P(l.pid).costo }; }), flete, total: merc + flete, condicion: cond, plazo: cond === 'credito' ? plazo : 0, vence: cond === 'credito' ? addDays(fec, plazo) : fec, fleteModo: fMod, transportadora: trans, editadoTs: now, ediciones: [...(c.ediciones || []), antes].slice(-10) };
+  upd['compras/' + cid] = nuevo;
+  const provs = DB.config.proveedores || []; if (!provs.includes(prov)) upd['config/proveedores'] = [...provs, prov];
+  guardar(upd); closeModal(); render(); historialCompras();
+  toast('✅ Compra ' + cid + ' corregida');
+  if (sinTocar.length || avisos.length) setTimeout(() => alert([...avisos, ...(sinTocar.length ? ['No cambié el costo actual de: ' + sinTocar.join(', ') + ' (entró otra compra después que ya lo actualizó).'] : [])].join('\n\n')), 300);
+}
 function historialCompras() {
   const cs = vals(DB.compras).sort((a, b) => b.fecha.localeCompare(a.fecha));
-  openModal('Historial de compras', `<div class="tw"><table><thead><tr><th>Compra</th><th>Fecha</th><th>Proveedor</th><th>Productos</th><th class="n">Total</th></tr></thead><tbody>${cs.map(c => `<tr><td>${c.id}${c.facturaProv ? '<div class="small mut">Fact. ' + esc(c.facturaProv) + '</div>' : ''}</td><td>${fFecha(c.fecha)}</td><td>${esc(c.proveedor)}</td><td class="small" style="white-space:normal">${(c.lineas || []).map(l => l.cant + ' × ' + esc(P(l.pid) ? P(l.pid).nombre : l.pid)).join('<br>')}</td><td class="n">${fmt(c.total)}${c.flete ? '<div class="small mut">incl. flete ' + fmt(c.flete) + '</div>' : ''}${(() => { const k = compraInfo(c), s = k.saldoProv + k.saldoFlete; return s > 0 ? `<div class="small" style="color:var(--bad)">Debe ${fmt(s)}</div>` : '<div class="small" style="color:var(--ok)">Pagada</div>'; })()}</td></tr>`).join('') || '<tr><td colspan="5" class="mut">Sin compras.</td></tr>'}</tbody></table></div>`, true);
+  openModal('Historial de compras', `<div class="tw"><table><thead><tr><th>Compra</th><th>Fecha</th><th>Proveedor</th><th>Productos</th><th class="n">Total</th><th></th></tr></thead><tbody>${cs.map(c => `<tr style="${c.anulada ? 'opacity:.55' : ''}"><td>${c.id}${c.facturaProv ? '<div class="small mut">Fact. ' + esc(c.facturaProv) + '</div>' : ''}</td><td>${fFecha(c.fecha)}</td><td>${esc(c.proveedor)}</td><td class="small" style="white-space:normal">${(c.lineas || []).map(l => l.cant + ' × ' + esc(P(l.pid) ? P(l.pid).nombre : l.pid)).join('<br>')}</td><td class="n">${fmt(c.total)}${c.flete ? '<div class="small mut">incl. flete ' + fmt(c.flete) + '</div>' : ''}${(() => { const k = compraInfo(c), s = k.saldoProv + k.saldoFlete; if (c.anulada) return `<div class="small"><span class="b mut">Anulada</span></div>${c.motivo ? `<div class="small mut">${esc(c.motivo)}</div>` : ''}`; return s > 0 ? `<div class="small" style="color:var(--bad)">Debe ${fmt(s)}</div>` : '<div class="small" style="color:var(--ok)">Pagada</div>'; })()}</td><td style="white-space:nowrap">${c.anulada ? '' : `<button class="btn sm sec" onclick="entradaMercancia('${c.id}')">✏️ Editar</button> <button class="btn sm bad" onclick="anularCompra('${c.id}')">Anular</button>`}</td></tr>`).join('') || '<tr><td colspan="6" class="mut">Sin compras.</td></tr>'}</tbody></table></div>`, true);
 }
 
 /* ---------- FINANZAS: CAJA, CUENTAS POR PAGAR, GASTOS Y RESULTADOS ---------- */
@@ -1477,12 +1715,13 @@ const tsDe = f => Date.parse(f + 'T12:00:00');
 
 // Estado de pago de una compra. Compras viejas (sin condición) quedan por pagar desde su fecha.
 function compraInfo(c) {
-  const merc = sum(c.lineas || [], l => l.cant * (l.costoFactura != null ? l.costoFactura : l.costo));
+  if (c.anulada) return { merc: 0, flete: 0, modo: null, totalProv: 0, totalFlete: 0, pagadoProv: 0, pagadoFlete: 0, saldoProv: 0, saldoFlete: 0, vence: c.vence || c.fecha, condicion: 'anulada' };
+  const merc = Math.round(sum(c.lineas || [], l => l.cant * (l.costoFactura != null ? l.costoFactura : l.costo)));   // pesos enteros (costos con decimales)
   const flete = +c.flete || 0, modo = flete ? (c.fleteModo || 'transportadora') : null;
   const totalProv = merc + (modo === 'proveedor' ? flete : 0), totalFlete = modo === 'transportadora' ? flete : 0;
   const pag = t => sum(movs().filter(m => m.tipo === t && m.compraId === c.id), m => m.valor);
   const pagadoProv = pag('pago_prov'), pagadoFlete = pag('pago_flete');
-  return { merc, flete, modo, totalProv, totalFlete, pagadoProv, pagadoFlete, saldoProv: Math.max(0, totalProv - pagadoProv), saldoFlete: Math.max(0, totalFlete - pagadoFlete), vence: c.vence || c.fecha, condicion: c.condicion || 'sin dato' };
+  return { merc, flete, modo, totalProv, totalFlete, pagadoProv, pagadoFlete, saldoProv: Math.max(0, Math.round(totalProv - pagadoProv)), saldoFlete: Math.max(0, Math.round(totalFlete - pagadoFlete)), vence: c.vence || c.fecha, condicion: c.condicion || 'sin dato' };
 }
 
 // Todos los movimientos de dinero (manuales + automáticos), en orden cronológico, con signo.
@@ -1517,7 +1756,7 @@ function resultadosMes(mes) {
   const gastos = movs().filter(m => m.tipo === 'gasto' && m.fecha.startsWith(mes)), porCat = {};
   gastos.forEach(m => porCat[m.categoria] = (porCat[m.categoria] || 0) + m.valor);
   const totGastos = sum(gastos, m => m.valor), bruta = ventas - costo;
-  const compras = sum(vals(DB.compras).filter(c => c.fecha.startsWith(mes)), c => c.total);
+  const compras = sum(vals(DB.compras).filter(c => !c.anulada && c.fecha.startsWith(mes)), c => c.total);
   const comis = sum(vendedores(), v => comisionVendedor(v.id, mes).comision);
   return { ventas, costo, bruta, porCat, totGastos, neta: bruta - totGastos, n: ps.length, compras, comis };
 }
@@ -1530,7 +1769,7 @@ function vFinanzas() {
   const vencido = sum(cs.filter(x => x.k.vence < T), x => x.k.saldoProv + x.k.saldoFlete);
   const porCobrar = sum(pedidos(), saldoPedido), inv = sum(productos(), p => p.stock * p.costo);
   const hayAporte = movs().some(m => m.tipo === 'aporte');
-  const tabs = [['resumen', 'Resumen'], ['pagar', 'Cuentas por pagar'], ['movs', 'Movimientos de caja'], ['resultados', 'Utilidad del mes']];
+  const tabs = [['resumen', 'Resumen'], ['pagar', 'Cuentas por pagar'], ['proveedores', 'Proveedores'], ['movs', 'Movimientos de caja'], ['resultados', 'Utilidad del mes']];
   $('app').innerHTML = `
   <div class="row between"><h2>Finanzas</h2><div class="row">
     <button class="btn bad" onclick="formMov('gasto')">− Registrar gasto</button>
@@ -1547,7 +1786,7 @@ function vFinanzas() {
   </div>
   <div class="tabs2">${tabs.map(([k, t]) => `<button class="${FN.tab === k ? 'on' : ''}" onclick="FN.tab='${k}';vFinanzas()">${t}</button>`).join('')}</div>
   <div id="finBody"></div>`;
-  ({ resumen: finResumen, pagar: finPagar, movs: finMovs, resultados: finResultados })[FN.tab](sal, cs);
+  ({ resumen: finResumen, pagar: finPagar, proveedores: finProveedores, movs: finMovs, resultados: finResultados })[FN.tab](sal, cs);
 }
 function finResumen(sal, cs) {
   const T = TODAY(), prox = cs.filter(x => x.k.saldoProv + x.k.saldoFlete > 0).sort((a, b) => a.k.vence.localeCompare(b.k.vence)).slice(0, 8);
@@ -1567,7 +1806,7 @@ function finResumen(sal, cs) {
 }
 function finPagar(sal, cs) {
   const T = TODAY(), pend = cs.filter(x => x.k.saldoProv + x.k.saldoFlete > 0).sort((a, b) => a.k.vence.localeCompare(b.k.vence));
-  const pag = cs.filter(x => x.k.saldoProv + x.k.saldoFlete === 0).sort((a, b) => b.c.fecha.localeCompare(a.c.fecha)).slice(0, 30);
+  const pag = cs.filter(x => !x.c.anulada && x.k.saldoProv + x.k.saldoFlete === 0).sort((a, b) => b.c.fecha.localeCompare(a.c.fecha)).slice(0, 30);
   const porProv = {}; pend.forEach(x => { porProv[x.c.proveedor] = (porProv[x.c.proveedor] || 0) + x.k.saldoProv; if (x.k.saldoFlete) { const t = x.c.transportadora || 'Transportadora'; porProv[t + ' (flete)'] = (porProv[t + ' (flete)'] || 0) + x.k.saldoFlete; } });
   $('finBody').innerHTML = `
   ${Object.keys(porProv).length ? `<div class="row" style="gap:6px;margin-bottom:10px;flex-wrap:wrap">${Object.entries(porProv).filter(([, v]) => v).sort((a, b) => b[1] - a[1]).map(([p, v]) => `<span class="b info">${esc(p)}: ${fmt(v)}</span>`).join('')}</div>` : ''}
@@ -1590,7 +1829,7 @@ function finMovs() {
     <span class="b ok">Entradas ${fmt(ent)}</span><span class="b bad">Salidas ${fmt(sal)}</span><span class="b info">Neto ${fmt(ent - sal)}</span>
   </div>
   <div class="tw"><table><thead><tr><th>Fecha</th><th>Tipo</th><th>Detalle</th><th>Cuenta</th><th class="n">Entrada</th><th class="n">Salida</th><th class="n">Saldo ${FN.cta ? esc(FN.cta) : 'total'}</th><th></th></tr></thead><tbody>
-  ${rows.slice().reverse().map(m => `<tr><td>${fFecha(m.fecha)}</td><td><span class="b ${(TIPO_MOV[m.tipo] || ['mut'])[0]}">${(TIPO_MOV[m.tipo] || ['', m.tipo])[1]}</span></td><td style="white-space:normal">${esc(m.txt)}${m.ref ? `<div class="small mut">Ref. ${esc(m.ref)}</div>` : ''}</td><td>${esc(m.cuenta)}</td><td class="n" style="color:var(--ok)">${m.monto > 0 ? fmt(m.monto) : ''}</td><td class="n" style="color:var(--bad)">${m.monto < 0 ? fmt(-m.monto) : ''}</td><td class="n">${fmt(FN.cta ? corrCta[m.id] : corr[m.id])}</td><td>${m.auto || m.espejo ? '<span class="small mut">auto</span>' : `<button class="btn sm sec" title="Borrar" onclick="borrarMov('${m.id}')">✕</button>`}</td></tr>`).join('') || '<tr><td colspan="8" class="mut">Sin movimientos en este mes.</td></tr>'}
+  ${rows.slice().reverse().map(m => `<tr><td>${fFecha(m.fecha)}</td><td><span class="b ${(TIPO_MOV[m.tipo] || ['mut'])[0]}">${(TIPO_MOV[m.tipo] || ['', m.tipo])[1]}</span></td><td style="white-space:normal">${esc(m.txt)}${m.ref ? `<div class="small mut">Ref. ${esc(m.ref)}</div>` : ''}</td><td>${esc(m.cuenta)}</td><td class="n" style="color:var(--ok)">${m.monto > 0 ? fmt(m.monto) : ''}</td><td class="n" style="color:var(--bad)">${m.monto < 0 ? fmt(-m.monto) : ''}</td><td class="n">${fmt(FN.cta ? corrCta[m.id] : corr[m.id])}</td><td>${m.auto || m.espejo ? '<span class="small mut">auto</span>' : `<span style="white-space:nowrap">${['gasto', 'aporte', 'ingreso', 'retiro', 'traslado'].includes(m.tipo) ? `<button class="btn sm sec" title="Editar" onclick="formMov('${['aporte', 'ingreso'].includes(m.tipo) ? 'aporte' : m.tipo}','${m.id}')">✏️</button> ` : ''}<button class="btn sm sec" title="Borrar" onclick="borrarMov('${m.id}')">✕</button></span>`}</td></tr>`).join('') || '<tr><td colspan="8" class="mut">Sin movimientos en este mes.</td></tr>'}
   </tbody></table></div>
   <p class="small mut" style="margin-top:8px">Los recaudos de cartera, ventas de contado entregadas y faltantes de liquidación entran solos (marcados "auto"). Las ventas de contado se cuentan en ${esc(cuentaDeMedio('Efectivo'))} al marcarlas como entregadas.</p>`;
 }
@@ -1616,32 +1855,35 @@ function finResultados() {
   </div>`;
 }
 
-function formMov(tipo) {
-  const T = TODAY(), cs = cuentas(), hayAporte = movs().some(m => m.tipo === 'aporte');
+function formMov(tipo, mid) {
+  const T = TODAY(), cs = cuentas(), hayAporte = movs().some(m => m.tipo === 'aporte'), m = mid ? DB.movimientos[mid] : null;
   const optC = sel => cs.map(c => `<option ${c === sel ? 'selected' : ''}>${esc(c)}</option>`).join('');
-  const tit = { gasto: 'Registrar gasto', aporte: 'Aporte de capital / otro ingreso', retiro: 'Retiro del dueño', traslado: 'Traslado entre cuentas' }[tipo];
+  const tit = (m ? 'Editar · ' : '') + { gasto: 'Registrar gasto', aporte: 'Aporte de capital / otro ingreso', retiro: 'Retiro del dueño', traslado: 'Traslado entre cuentas' }[tipo];
   openModal(tit, `
-    ${tipo === 'aporte' ? `<label class="f">Tipo<select id="mvTipo"><option value="aporte">Aporte de capital (saldo inicial, inyección de plata)</option><option value="ingreso">Otro ingreso (no es venta)</option></select></label>` : ''}
-    ${tipo === 'gasto' ? `<label class="f">Categoría<select id="mvCat">${CAT_GASTO.map(c => `<option>${c}</option>`).join('')}</select></label>` : ''}
+    ${tipo === 'aporte' ? `<label class="f">Tipo<select id="mvTipo"><option value="aporte">Aporte de capital (saldo inicial, inyección de plata)</option><option value="ingreso" ${m && m.tipo === 'ingreso' ? 'selected' : ''}>Otro ingreso (no es venta)</option></select></label>` : ''}
+    ${tipo === 'gasto' ? `<label class="f">Categoría<select id="mvCat">${CAT_GASTO.map(c => `<option ${m && m.categoria === c ? 'selected' : ''}>${c}</option>`).join('')}</select></label>` : ''}
     <div class="fg" style="margin-top:10px">
-      <label>Valor<input id="mvVal" type="number" min="1" value="${tipo === 'aporte' && !hayAporte ? 15000000 : ''}"></label>
-      <label>${tipo === 'traslado' ? 'Sale de' : tipo === 'aporte' ? 'Entra a' : 'Sale de'}<select id="mvCta">${optC(cs[0])}</select></label>
-      ${tipo === 'traslado' ? `<label>Entra a<select id="mvDst">${optC(cs[1] || cs[0])}</select></label>` : ''}
-      <label>Fecha<input id="mvFec" type="date" value="${T}"></label>
+      <label>Valor<input id="mvVal" type="number" min="1" value="${m ? m.valor : tipo === 'aporte' && !hayAporte ? 15000000 : ''}"></label>
+      <label>${tipo === 'traslado' ? 'Sale de' : tipo === 'aporte' ? 'Entra a' : 'Sale de'}<select id="mvCta">${optC(m ? m.cuenta : cs[0])}</select></label>
+      ${tipo === 'traslado' ? `<label>Entra a<select id="mvDst">${optC(m ? m.destino : cs[1] || cs[0])}</select></label>` : ''}
+      <label>Fecha<input id="mvFec" type="date" value="${m ? m.fecha : T}"></label>
     </div>
-    <label class="f" style="margin-top:10px">Detalle<input id="mvDesc" placeholder="${tipo === 'gasto' ? 'Ej: arriendo bodega octubre' : tipo === 'aporte' ? 'Ej: Saldo inicial del negocio' : tipo === 'traslado' ? 'Ej: consignación del efectivo' : 'Ej: retiro personal'}" value="${tipo === 'aporte' && !hayAporte ? 'Saldo inicial del negocio' : ''}"></label>
-    <label class="f" style="margin-top:10px">Referencia / comprobante (opcional)<input id="mvRef"></label>
-    <div class="mfoot"><button class="btn sec" onclick="closeModal()">Cancelar</button><button class="btn" id="btnMv" onclick="guardarMov('${tipo}')">Guardar</button></div>`);
+    <label class="f" style="margin-top:10px">Detalle<input id="mvDesc" placeholder="${tipo === 'gasto' ? 'Ej: arriendo bodega octubre' : tipo === 'aporte' ? 'Ej: Saldo inicial del negocio' : tipo === 'traslado' ? 'Ej: consignación del efectivo' : 'Ej: retiro personal'}" value="${m ? esc(m.desc || '') : tipo === 'aporte' && !hayAporte ? 'Saldo inicial del negocio' : ''}"></label>
+    <label class="f" style="margin-top:10px">Referencia / comprobante (opcional)<input id="mvRef" value="${m ? esc(m.ref || '') : ''}"></label>
+    <div class="mfoot"><button class="btn sec" onclick="closeModal()">Cancelar</button><button class="btn" id="btnMv" onclick="guardarMov('${tipo}'${m ? `,'${m.id}'` : ''})">Guardar</button></div>`);
 }
-function guardarMov(tipo) {
+function guardarMov(tipo, mid) {
   const v = Math.round(+$('mvVal').value || 0), cta = $('mvCta').value, fec = $('mvFec').value || TODAY();
   if (!(v > 0)) return toast('Escribe un valor mayor a 0');
-  const t = tipo === 'aporte' ? $('mvTipo').value : tipo, id = uid('M');
-  const m = { id, tipo: t, fecha: fec, ts: Date.now(), cuenta: cta, valor: v, desc: $('mvDesc').value.trim(), ref: $('mvRef').value.trim() || null };
+  const viejo = mid ? DB.movimientos[mid] : null;
+  const t = tipo === 'aporte' ? $('mvTipo').value : tipo, id = mid || uid('M');
+  const m = { id, tipo: t, fecha: fec, ts: viejo ? viejo.ts : Date.now(), cuenta: cta, valor: v, desc: $('mvDesc').value.trim(), ref: $('mvRef').value.trim() || null };
+  if (viejo) { m.editadoTs = Date.now(); m.antes = { valor: viejo.valor, cuenta: viejo.cuenta, fecha: viejo.fecha }; }
   if (tipo === 'gasto') m.categoria = $('mvCat').value;
   if (tipo === 'traslado') { m.destino = $('mvDst').value; if (m.destino === cta) return toast('Elige dos cuentas distintas'); }
-  if ((TIPO_MOV[t][2] < 0 || tipo === 'traslado') && saldoCuenta(cta) < v && !confirm(`${cta} tiene ${fmt(saldoCuenta(cta))}. ¿Registrar igual? (quedará en negativo)`)) return;
-  guardar({ ['movimientos/' + id]: m }); closeModal(); render(); toast('✅ ' + TIPO_MOV[t][1] + ' registrado · ' + fmt(v));
+  const disp = saldoCuenta(cta) + (viejo && viejo.cuenta === cta && (TIPO_MOV[viejo.tipo][2] < 0 || viejo.tipo === 'traslado') ? viejo.valor : 0);
+  if ((TIPO_MOV[t][2] < 0 || tipo === 'traslado') && disp < v && !confirm(`${cta} tiene ${fmt(disp)}. ¿Registrar igual? (quedará en negativo)`)) return;
+  guardar({ ['movimientos/' + id]: m }); closeModal(); render(); toast('✅ ' + TIPO_MOV[t][1] + (viejo ? ' corregido · ' : ' registrado · ') + fmt(v));
 }
 function borrarMov(id) {
   const m = (DB.movimientos || {})[id]; if (!m) return;
@@ -1667,6 +1909,110 @@ function guardarPagoCompra(cid, que) {
   const id = uid('M'), tercero = que === 'flete' ? (c.transportadora || 'Transportadora') : c.proveedor;
   guardar({ ['movimientos/' + id]: { id, tipo: que === 'flete' ? 'pago_flete' : 'pago_prov', fecha: $('pgFec').value || TODAY(), ts: Date.now(), cuenta: cta, valor: v, compraId: cid, tercero, ref: $('pgRef').value.trim() || null, desc: (que === 'flete' ? 'Flete ' : 'Pago ') + cid + ' · ' + tercero } });
   closeModal(); render(); toast(v === saldo ? '✅ ' + cid + ' quedó pagada' : '✅ Abono registrado · queda ' + fmt(saldo - v));
+}
+
+/* ---------- PROVEEDORES ---------- */
+// proveedores/{id}: { id, nombre, nit, telefono, contacto, ciudad, plazo (días de crédito, 0 = contado), banco, nota, activo }
+// Los nombres viejos (config.proveedores y compras) siguen funcionando; aparecen como "por completar".
+const proveedoresDir = () => vals(DB.proveedores).sort((a, b) => a.nombre.localeCompare(b.nombre));
+const provPorNombre = n => proveedoresDir().find(x => x.nombre.toLowerCase() === String(n || '').toLowerCase());
+function nombresProveedores() {
+  const s = new Set(proveedoresDir().filter(x => x.activo !== false).map(x => x.nombre));
+  (DB.config.proveedores || []).forEach(n => s.add(n));
+  return [...s].sort((a, b) => a.localeCompare(b));
+}
+function finProveedores() {
+  const cs = vals(DB.compras), dir = proveedoresDir();
+  const sueltos = [...new Set([...(DB.config.proveedores || []), ...cs.map(c => c.proveedor)])].filter(n => n && !provPorNombre(n));
+  const filas = [...dir.map(pv => ({ pv, n: pv.nombre })), ...sueltos.map(n => ({ pv: null, n }))].sort((a, b) => a.n.localeCompare(b.n));
+  const info = n => { const mc = cs.filter(c => c.proveedor === n && !c.anulada); return { compras: sum(mc, c => c.total), n: mc.length, debe: sum(mc, c => compraInfo(c).saldoProv), ult: mc.map(c => c.fecha).sort().pop() }; };
+  $('finBody').innerHTML = `
+  <div class="row between" style="margin-bottom:10px"><span class="small mut">${dir.length} proveedores registrados${sueltos.length ? ` · ${sueltos.length} por completar datos` : ''}</span><button class="btn" onclick="formProveedor()">+ Proveedor</button></div>
+  <div class="tw"><table><thead><tr><th>Proveedor</th><th>Contacto</th><th>Condición</th><th class="n">Compras</th><th class="n">Le debes</th><th>Última compra</th><th></th></tr></thead><tbody>
+  ${filas.map(({ pv, n }) => { const k = info(n); return `<tr class="clk" data-n="${esc(n)}" onclick="${pv ? `formProveedor('${pv.id}')` : `formProveedor('', this.dataset.n)`}">
+    <td><b>${esc(n)}</b>${pv && pv.nit ? `<div class="small mut">NIT ${esc(pv.nit)}</div>` : ''}${pv ? (pv.activo === false ? ' <span class="b mut">inactivo</span>' : '') : ' <span class="b warn">completar datos</span>'}</td>
+    <td>${pv ? `${esc(pv.contacto || '')}${pv.telefono ? `<div class="small"><a href="${waLink(pv.telefono, 'Hola ' + (pv.contacto || n) + ', ')}" target="_blank" onclick="event.stopPropagation()">📱 ${esc(pv.telefono)}</a></div>` : ''}${pv.ciudad ? `<div class="small mut">${esc(pv.ciudad)}</div>` : ''}` : '—'}</td>
+    <td>${pv ? (+pv.plazo > 0 ? 'Crédito ' + pv.plazo + ' días' : 'Contado') : '—'}</td>
+    <td class="n">${fmt(k.compras)}<div class="small mut">${k.n} compra${k.n === 1 ? '' : 's'}</div></td>
+    <td class="n" style="color:${k.debe ? 'var(--bad)' : 'inherit'}">${k.debe ? fmt(k.debe) : '—'}</td>
+    <td>${k.ult ? fFecha(k.ult) : '—'}</td>
+    <td>${k.debe ? `<button class="btn sm" onclick="event.stopPropagation();FN.tab='pagar';vFinanzas()">Ver deudas</button>` : ''}</td></tr>`; }).join('') || '<tr><td colspan="7" class="mut">Aún no tienes proveedores. Crea el primero con "+ Proveedor".</td></tr>'}
+  </tbody></table></div>`;
+}
+function formProveedor(id, nombreSugerido) {
+  const pv = id ? DB.proveedores[id] : { nombre: nombreSugerido || '', nit: '', telefono: '', contacto: '', ciudad: '', plazo: 0, banco: '', nota: '', activo: true };
+  openModal(id ? 'Editar proveedor' : 'Nuevo proveedor', `
+    <div class="fg"><label>Nombre / razón social<input id="pvN" value="${esc(pv.nombre)}"></label><label>NIT o cédula <span class="small mut">(opcional)</span><input id="pvNit" value="${esc(pv.nit || '')}"></label></div>
+    <div class="fg" style="margin-top:10px"><label>Persona de contacto<input id="pvC" value="${esc(pv.contacto || '')}" placeholder="Ej: asesor comercial"></label><label>Teléfono / WhatsApp<input id="pvT" value="${esc(pv.telefono || '')}" inputmode="tel"></label><label>Ciudad<input id="pvCi" value="${esc(pv.ciudad || '')}" placeholder="Ej: Medellín"></label></div>
+    <div class="fg" style="margin-top:10px"><label>Condición habitual<select id="pvCond" onchange="$('pvPlL').style.display=this.value==='credito'?'':'none'"><option value="contado" ${+pv.plazo > 0 ? '' : 'selected'}>Contado</option><option value="credito" ${+pv.plazo > 0 ? 'selected' : ''}>Crédito</option></select></label><label id="pvPlL" style="${+pv.plazo > 0 ? '' : 'display:none'}">Plazo (días)<input id="pvPl" type="number" min="1" value="${+pv.plazo || 30}"></label>${id ? `<label>Estado<select id="pvA"><option value="1" ${pv.activo !== false ? 'selected' : ''}>Activo</option><option value="0" ${pv.activo === false ? 'selected' : ''}>Inactivo</option></select></label>` : ''}</div>
+    <label class="f" style="margin-top:10px">Cuenta para pagarle <span class="small mut">(opcional)</span><input id="pvB" value="${esc(pv.banco || '')}" placeholder="Ej: Bancolombia ahorros 123-456789-00 / Nequi 300..."></label>
+    <label class="f" style="margin-top:10px">Notas <span class="small mut">(qué le compras, pedido mínimo, días de despacho…)</span><input id="pvNo" value="${esc(pv.nota || '')}"></label>
+    <div class="small mut" style="margin-top:8px">La condición habitual se pone sola al escoger este proveedor en la entrada de mercancía.</div>
+    <div class="mfoot">${id && !vals(DB.compras).some(c => c.proveedor === pv.nombre) ? `<button class="btn bad" onclick="borrarProveedor('${id}')">Eliminar</button>` : ''}<button class="btn sec" onclick="closeModal()">Cancelar</button><button class="btn" onclick="guardarProveedor('${id || ''}')">Guardar</button></div>`);
+}
+function guardarProveedor(id) {
+  const nombre = $('pvN').value.trim().replace(/\s+/g, ' ');
+  if (!nombre) return toast('Escribe el nombre del proveedor');
+  const otro = provPorNombre(nombre); if (otro && otro.id !== id) return toast('Ya existe un proveedor con ese nombre');
+  const d = { nombre, nit: $('pvNit').value.trim(), contacto: $('pvC').value.trim(), telefono: $('pvT').value.trim(), ciudad: $('pvCi').value.trim(), plazo: $('pvCond').value === 'credito' ? Math.max(1, parseInt($('pvPl').value, 10) || 30) : 0, banco: $('pvB').value.trim(), nota: $('pvNo').value.trim(), activo: id ? $('pvA').value === '1' : true };
+  const upd = {}, nid = id || uid('PV');
+  if (id) {
+    const viejo = DB.proveedores[id].nombre;
+    for (const k in d) upd[`proveedores/${id}/${k}`] = d[k];
+    if (viejo !== nombre) { // renombrar: las compras y pagos quedan con el nombre nuevo
+      vals(DB.compras).filter(c => c.proveedor === viejo).forEach(c => upd[`compras/${c.id}/proveedor`] = nombre);
+      movs().filter(m => m.tercero === viejo).forEach(m => upd[`movimientos/${m.id}/tercero`] = nombre);
+    }
+  } else upd['proveedores/' + nid] = { id: nid, ...d, ts: Date.now() };
+  const lista = (DB.config.proveedores || []).filter(n => n !== (id ? DB.proveedores[id].nombre : '')); if (!lista.includes(nombre)) lista.push(nombre);
+  upd['config/proveedores'] = lista;
+  guardar(upd); closeModal(); FN.tab = 'proveedores'; render(); toast('✅ Proveedor guardado');
+}
+function borrarProveedor(id) {
+  const pv = DB.proveedores[id]; if (!confirm('¿Eliminar a ' + pv.nombre + '?')) return;
+  guardar({ ['proveedores/' + id]: null, 'config/proveedores': (DB.config.proveedores || []).filter(n => n !== pv.nombre) }); closeModal(); render(); toast('Proveedor eliminado');
+}
+
+/* ---------- CORRECCIONES: anular compra, reversar abono, ajustar inventario ---------- */
+async function anularCompra(cid) {
+  const c = DB.compras[cid]; if (!c || c.anulada) return;
+  const sale = {}; (c.lineas || []).forEach(l => sale[l.pid] = (sale[l.pid] || 0) + l.cant);
+  const falta = Object.entries(sale).filter(([pid, q]) => P(pid) && P(pid).stock < q);
+  if (falta.length) return alert('No se puede anular ' + cid + ': parte de esa mercancía ya se vendió.\n\n' + falta.map(([pid, q]) => `${P(pid).nombre}: entraron ${q}, hay ${P(pid).stock}`).join('\n') + '\n\nCorrige con "Ajustar stock" en el producto.');
+  const pagos = movs().filter(m => m.compraId === cid), totPag = sum(pagos, m => m.valor);
+  const mot = prompt(`Anular ${cid} de ${c.proveedor} por ${fmt(c.total)}.\n\nSe descuentan las unidades del inventario${pagos.length ? `, y los pagos registrados (${fmt(totPag)}) se borran y la plata vuelve a su cuenta` : ''}.\n\nEscribe el motivo:`);
+  if (!mot) return;
+  const upd = { [`compras/${cid}/anulada`]: true, [`compras/${cid}/anuladaTs`]: Date.now(), [`compras/${cid}/motivo`]: mot };
+  for (const pid in sale) if (P(pid)) upd[`productos/${pid}/stock`] = P(pid).stock - sale[pid];
+  (c.lineas || []).forEach(l => { if (P(l.pid) && l.costoAnt != null && P(l.pid).costo === l.costo) upd[`productos/${l.pid}/costo`] = l.costoAnt; });
+  pagos.forEach(m => upd['movimientos/' + m.id] = null);
+  guardar(upd); toast('Compra ' + cid + ' anulada'); render(); historialCompras();
+}
+function reversarAbono(pid, aid) {
+  const o = PED(pid), a = o.abonos[aid];
+  const mot = prompt(`Reversar abono de ${fmt(a.valor)} (${a.medio}, ${fFecha(a.fecha)}).\nLa factura vuelve a quedar con ese saldo y la plata sale de caja.${a.liqId ? '\nOjo: este abono vino en una liquidación del vendedor.' : ''}\n\nEscribe el motivo:`);
+  if (!mot) return;
+  const hist = { ...a, reversadoTs: Date.now(), motivo: mot };
+  guardar({ [`pedidos/${pid}/abonos/${aid}`]: null, [`pedidos/${pid}/abonosReversados/${aid}`]: hist });
+  toast('Abono reversado'); render(); verPedido(pid);
+}
+function ajustarStock(pid) {
+  const p = P(pid);
+  openModal('Ajustar stock · ' + p.nombre, `
+    <div class="small mut" style="margin-bottom:8px">Úsalo para corregir errores de conteo, averías o pérdidas. Las compras y ventas ya mueven el stock solas.</div>
+    <div class="fg"><label>Stock actual (und)<input value="${p.stock}${factorDe(p) > 1 ? ' = ' + fmtCant(p, p.stock) : ''}" disabled></label><label>Stock real contado (und)<input id="ajN" type="number" min="0" value="${p.stock}" oninput="$('ajD').textContent=(+this.value-${p.stock}>0?'+':'')+(+this.value-${p.stock})+' und'"></label></div>
+    <div class="small" id="ajD" style="margin-top:6px;font-weight:700">0 und</div>
+    <label class="f" style="margin-top:10px">Motivo<select id="ajM"><option>Error de digitación</option><option>Conteo físico</option><option>Producto averiado / vencido</option><option>Pérdida o robo</option><option>Otro</option></select></label>
+    <label class="f" style="margin-top:10px">Nota (opcional)<input id="ajNo"></label>
+    <div class="mfoot"><button class="btn sec" onclick="formProducto('${pid}')">Volver</button><button class="btn" onclick="guardarAjuste('${pid}')">Guardar ajuste</button></div>`);
+}
+function guardarAjuste(pid) {
+  const p = P(pid), n = parseInt($('ajN').value, 10);
+  if (!(n >= 0)) return toast('Escribe una cantidad válida');
+  if (n === p.stock) return toast('No hay cambio');
+  const id = uid('AJ'), antes = p.stock;
+  guardar({ [`productos/${pid}/stock`]: n, ['ajustes/' + id]: { id, pid, fecha: TODAY(), ts: Date.now(), antes, despues: n, dif: n - antes, costo: p.costo, motivo: $('ajM').value, nota: $('ajNo').value.trim() } });
+  closeModal(); render(); toast(`Stock de ${p.nombre}: ${antes} → ${n}`);
 }
 
 /* ---------- CARTERA ---------- */
@@ -1790,6 +2136,13 @@ function vEquipo() {
       <label class="f" style="margin-top:10px">Dirección<input id="cfEA" value="${esc((DB.config.empresa || {}).dir || '')}" placeholder="Ej: Cra 4 # 25-10, Quibdó"></label>
       <p class="small mut">Aparece en el encabezado, documentos de venta, remisiones, planillas y mensajes de WhatsApp. Para el logo usa solo el ícono (cuadrado, sin texto): el nombre ya se escribe al lado.</p>
       <div class="mfoot"><button class="btn" onclick="guardarEmpresa()">Guardar empresa</button></div></div>
+    ${(() => { const ct = DB.config.catalogo || {}; return `<div class="card"><h3>🛍️ Catálogo para clientes</h3>
+      <p class="small mut" style="margin-top:-4px">Página con fotos y precios (sin costos ni cantidades) que le mandas a los clientes por WhatsApp. Se actualiza sola con el inventario.</p>
+      <div class="fg"><label>WhatsApp donde llegan los pedidos<input id="ctW" inputmode="tel" value="${esc(ct.whatsapp || '')}" placeholder="${esc((DB.config.empresa || {}).tel || 'Ej: 3101234567')}"></label><label>Pedido mínimo ($, opcional)<input id="ctMin" inputmode="numeric" value="${ct.minimo || ''}" placeholder="Ej: 100000"></label></div>
+      <div class="fg" style="margin-top:10px"><label>Formas de pago<input id="ctPag" value="${esc(ct.pagos || '')}" placeholder="Ej: Efectivo, Nequi, Daviplata · crédito a clientes aprobados"></label><label>Entregas<input id="ctEnt" value="${esc(ct.entregas || '')}" placeholder="Ej: Quibdó martes y viernes · municipios cada 15 días"></label></div>
+      <label class="f" style="margin-top:10px">Aviso o promoción (sale arriba, opcional)<input id="ctNota" value="${esc(ct.nota || '')}" placeholder="Ej: ¡Nuevos geles Fawy! 24+ unidades a precio especial"></label>
+      <label class="small" style="display:flex;gap:6px;align-items:center;margin-top:10px"><input type="checkbox" id="ctAgo" style="width:auto" ${ct.ocultarAgotados ? 'checked' : ''}> Ocultar productos agotados (si no, salen marcados "Agotado")</label>
+      <div class="mfoot" style="flex-wrap:wrap;gap:6px"><button class="btn sec" onclick="window.open(linkCatalogo(),'_blank')">👁 Ver catálogo</button><button class="btn sec" onclick="copiarCatalogo()">📋 Copiar link</button><button class="btn sec" onclick="window.open('https://wa.me/?text='+encodeURIComponent('Hola 👋 Este es nuestro catálogo con precios actualizados. Marca lo que necesitas y envíanos el pedido por WhatsApp: '+linkCatalogo()),'_blank')">💬 Enviar por WhatsApp</button><button class="btn" onclick="guardarCatalogo()">Guardar catálogo</button></div></div>`; })()}
     <div class="card"><h3>Datos</h3>
       <p class="small">Modo actual: <b>${MODO === 'local' ? 'Demo local (solo este navegador)' : 'Firebase · en la nube'}</b></p>
       <div class="row"><button class="btn sec" onclick="respaldo()">⬇ Descargar copia de seguridad</button></div>
@@ -1828,6 +2181,18 @@ function guardarEmpresa() {
   if (!e.nombre) return toast('Escribe el nombre de la empresa');
   const upd = {}; for (const k in e) upd['config/empresa/' + k] = e[k];
   guardar(upd); aplicarMarca(); render(); toast('Empresa guardada');
+}
+const linkCatalogo = () => new URL('catalogo.html', location.href).href;
+function copiarCatalogo() {
+  const l = linkCatalogo();
+  (navigator.clipboard ? navigator.clipboard.writeText(l) : Promise.reject()).then(() => toast('✅ Link copiado: ' + l)).catch(() => prompt('Copia el link del catálogo:', l));
+}
+function guardarCatalogo() {
+  const w = $('ctW').value.replace(/\D/g, '');
+  if (w && w.length < 10) return toast('El WhatsApp debe tener 10 dígitos');
+  const min = numCO($('ctMin').value) || 0;
+  guardar({ 'config/catalogo': { whatsapp: w, minimo: min > 0 ? Math.round(min) : 0, pagos: $('ctPag').value.trim(), entregas: $('ctEnt').value.trim(), nota: $('ctNota').value.trim(), ocultarAgotados: $('ctAgo').checked } });
+  render(); toast('✅ Catálogo guardado · los clientes ya lo ven');
 }
 function guardarConfig() {
   const upd = { 'config/admin/usuario': $('cfU').value.trim() || 'admin', 'config/descMaxVendedor': +$('cfD').value };
