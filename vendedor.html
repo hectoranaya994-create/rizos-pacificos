@@ -749,6 +749,10 @@ const enCola = id => cola().some(u => Object.keys(u).some(k => k.startsWith('ped
 RENDER = render;
 // Arranca cuando TODO el script ya cargó: si había sesión guardada, render() usa constantes declaradas más abajo
 // (antes fallaba al reabrir la app con sesión abierta: quedaba "Sin conexión" y no dejaba entrar).
+// Guarda la app en el celular para poder abrirla sin internet (sw.js está en la raíz del repositorio)
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+  try { navigator.serviceWorker.register(DEMO ? '../sw.js' : 'sw.js').catch(e => console.warn('SW', e)); } catch (e) {}
+}
 setTimeout(() => iniciarDatos(origen => {
   if (VID && DB.vendedores && !DB.vendedores[VID]) salir(true);
   vigilarCambios();
