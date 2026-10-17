@@ -118,7 +118,7 @@ const FIREBASE_CONFIG = {
   messagingSenderId: "266793024970",
   appId: "1:266793024970:web:09bbc82d5ba6cf10156333"
 };
-const DEMO = false;
+const DEMO = true;
 const RAIZ = DEMO ? 'distcap' : 'rizos';
 const PFX = DEMO ? 'rp_demo_' : 'rp_';
 const FB_VER = '10.12.2';
@@ -281,12 +281,30 @@ function revisar() {
   $('modal').classList.add('on');
 }
 function cerrar() { $('modal').classList.remove('on'); }
+// Mensaje de WhatsApp: un bloque por producto, presentación en palabras completas y precio de cada una
+const plural = (w, k) => k === 1 ? w : /[aeiou]$/i.test(w) ? w + 's' : w + 'es';
+function cantLarga(p, c) {
+  const f = p.factor, nom = (p.presNom || 'Unidad').toLowerCase();
+  if (f === 1) return `${c} ${plural('unidad', c)}`;
+  const q = Math.floor(c / f), r = c % f;
+  return [q ? `${q} ${plural(nom, q)}` : '', r ? `${r} ${plural('unidad', r)} ${r === 1 ? 'suelta' : 'sueltas'}` : ''].filter(Boolean).join(' + ');
+}
+function mensajePedido(n, b, ls, tot, o) {
+  const linea = '━━━━━━━━━━━━━━━';
+  const items = ls.map((x, i) => {
+    const p = x.p, c = x.c, f = p.factor, pu = precioPara(p, c), sub = Math.round(c * pu);
+    const det = f > 1 && c % f === 0 ? `${cantLarga(p, c)} × ${fmt(pu * f)}` : f === 1 ? `${cantLarga(p, c)} × ${fmt(pu)}` : cantLarga(p, c);
+    return `*${i + 1}. ${p.nombre}*  _(${p.sku})_\n     ${det} = *${fmt(sub)}*`;
+  });
+  return [`🛒 *PEDIDO DESDE EL CATÁLOGO*`, `🏪 *${n}*`, b ? `📍 ${b}` : '', linea, items.join('\n\n'), linea,
+    `*TOTAL: ${fmt(tot)}*`, `${ls.length} ${plural('producto', ls.length)}`, o ? `\n📝 *Nota:* ${o}` : '', `\n_Precios sujetos a confirmación de disponibilidad._`].filter(Boolean).join('\n');
+}
 function enviar() {
   const n = $('pcN').value.trim(), b = $('pcB').value.trim();
   if (!n) { toast('Escribe el nombre de tu tienda'); return $('pcN').focus(); }
   lsSet(PFX + 'catalogo_cliente', { n, b });
   const ls = lineas(), tot = ls.reduce((s, x) => s + x.c * precioPara(x.p, x.c), 0), o = $('pcO').value.trim();
-  const txt = `🛒 *Pedido desde el catálogo*\n*${n}*${b ? '\n' + b : ''}\n\n` + ls.map(x => `• ${fmtCant(x.p, x.c)} × ${x.p.nombre} (${x.p.sku}) — ${fmt(x.c * precioPara(x.p, x.c))}`).join('\n') + `\n\n*Total aprox.: ${fmt(tot)}*${o ? '\nNota: ' + o : ''}`;
+  const txt = mensajePedido(n, b, ls, tot, o);
   const t = telWa();
   window.open('https://wa.me/' + (t || '') + '?text=' + encodeURIComponent(txt), '_blank');
   setTimeout(() => { if (confirm('¿Enviaste el pedido? Si es así, vaciamos la lista.')) { CART = {}; lsSet(LS_CART, CART); cerrar(); pintar(); } }, 1500);
