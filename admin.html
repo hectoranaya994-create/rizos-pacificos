@@ -2074,6 +2074,13 @@ function vEquipo() {
       <label class="f" style="margin-top:10px">Dirección<input id="cfEA" value="${esc((DB.config.empresa || {}).dir || '')}" placeholder="Ej: Cra 4 # 25-10, Quibdó"></label>
       <p class="small mut">Aparece en el encabezado, documentos de venta, remisiones, planillas y mensajes de WhatsApp. Para el logo usa solo el ícono (cuadrado, sin texto): el nombre ya se escribe al lado.</p>
       <div class="mfoot"><button class="btn" onclick="guardarEmpresa()">Guardar empresa</button></div></div>
+    ${(() => { const ct = DB.config.catalogo || {}; return `<div class="card"><h3>🛍️ Catálogo para clientes</h3>
+      <p class="small mut" style="margin-top:-4px">Página con fotos y precios (sin costos ni cantidades) que le mandas a los clientes por WhatsApp. Se actualiza sola con el inventario.</p>
+      <div class="fg"><label>WhatsApp donde llegan los pedidos<input id="ctW" inputmode="tel" value="${esc(ct.whatsapp || '')}" placeholder="${esc((DB.config.empresa || {}).tel || 'Ej: 3101234567')}"></label><label>Pedido mínimo ($, opcional)<input id="ctMin" inputmode="numeric" value="${ct.minimo || ''}" placeholder="Ej: 100000"></label></div>
+      <div class="fg" style="margin-top:10px"><label>Formas de pago<input id="ctPag" value="${esc(ct.pagos || '')}" placeholder="Ej: Efectivo, Nequi, Daviplata · crédito a clientes aprobados"></label><label>Entregas<input id="ctEnt" value="${esc(ct.entregas || '')}" placeholder="Ej: Quibdó martes y viernes · municipios cada 15 días"></label></div>
+      <label class="f" style="margin-top:10px">Aviso o promoción (sale arriba, opcional)<input id="ctNota" value="${esc(ct.nota || '')}" placeholder="Ej: ¡Nuevos geles Fawy! 24+ unidades a precio especial"></label>
+      <label class="small" style="display:flex;gap:6px;align-items:center;margin-top:10px"><input type="checkbox" id="ctAgo" style="width:auto" ${ct.ocultarAgotados ? 'checked' : ''}> Ocultar productos agotados (si no, salen marcados "Agotado")</label>
+      <div class="mfoot" style="flex-wrap:wrap;gap:6px"><button class="btn sec" onclick="window.open(linkCatalogo(),'_blank')">👁 Ver catálogo</button><button class="btn sec" onclick="copiarCatalogo()">📋 Copiar link</button><button class="btn sec" onclick="window.open('https://wa.me/?text='+encodeURIComponent('Hola 👋 Este es nuestro catálogo con precios actualizados. Marca lo que necesitas y envíanos el pedido por WhatsApp: '+linkCatalogo()),'_blank')">💬 Enviar por WhatsApp</button><button class="btn" onclick="guardarCatalogo()">Guardar catálogo</button></div></div>`; })()}
     <div class="card"><h3>Datos</h3>
       <p class="small">Modo actual: <b>${MODO === 'local' ? 'Demo local (solo este navegador)' : 'Firebase · en la nube'}</b></p>
       <div class="row"><button class="btn sec" onclick="respaldo()">⬇ Descargar copia de seguridad</button></div>
@@ -2112,6 +2119,18 @@ function guardarEmpresa() {
   if (!e.nombre) return toast('Escribe el nombre de la empresa');
   const upd = {}; for (const k in e) upd['config/empresa/' + k] = e[k];
   guardar(upd); aplicarMarca(); render(); toast('Empresa guardada');
+}
+const linkCatalogo = () => new URL('catalogo.html', location.href).href;
+function copiarCatalogo() {
+  const l = linkCatalogo();
+  (navigator.clipboard ? navigator.clipboard.writeText(l) : Promise.reject()).then(() => toast('✅ Link copiado: ' + l)).catch(() => prompt('Copia el link del catálogo:', l));
+}
+function guardarCatalogo() {
+  const w = $('ctW').value.replace(/\D/g, '');
+  if (w && w.length < 10) return toast('El WhatsApp debe tener 10 dígitos');
+  const min = numCO($('ctMin').value) || 0;
+  guardar({ 'config/catalogo': { whatsapp: w, minimo: min > 0 ? Math.round(min) : 0, pagos: $('ctPag').value.trim(), entregas: $('ctEnt').value.trim(), nota: $('ctNota').value.trim(), ocultarAgotados: $('ctAgo').checked } });
+  render(); toast('✅ Catálogo guardado · los clientes ya lo ven');
 }
 function guardarConfig() {
   const upd = { 'config/admin/usuario': $('cfU').value.trim() || 'admin', 'config/descMaxVendedor': +$('cfD').value };
