@@ -454,8 +454,36 @@ const brutoDe = o => sum(lineasDe(o), l => l.cant * l.precio);
 const calcTotal = (lineas, desc) => Math.round(sum(lineas, l => l.cant * l.precio) * (1 - (desc || 0) / 100));
 // Precios por volumen: productos/{pid}/escalas = [{desde, precio}]. Aplica por línea según la cantidad pedida.
 const escalasDe = p => (p && p.escalas ? vals(p.escalas) : []).filter(e => e && e.desde > 1 && e.precio > 0).sort((a, b) => a.desde - b.desde);
-function precioPara(p, cant) { let pr = p ? p.precio : 0; escalasDe(p).forEach(e => { if (cant >= e.desde) pr = e.precio; }); return pr; }
-const escalasTxt = p => escalasDe(p).map(e => `${e.desde}+ und ${fmt(e.precio)}`).join(' · ');
+/* PRESENTACIÓN DE VENTA (docena, caja, tira…)
+   Inventario, costo, precio y cantidades de los pedidos se guardan SIEMPRE por UNIDAD.
+   p.factor = unidades por presentación (1 = se vende por unidad), p.presNom = nombre (Docena, Caja…),
+   p.suelto = también se vende suelto, p.precioSuelto = precio de la unidad suelta.
+   La presentación solo cambia cómo se muestra y cómo se pide (el + suma una docena). */
+const factorDe = p => Math.max(1, parseInt(p && p.factor, 10) || 1);
+const ABREV_PRES = { Docena: 'doc', Caja: 'cj', Paquete: 'paq', Tira: 'tira', Display: 'disp', Bulto: 'bulto', Sixpack: 'six' };
+function presDe(p) {
+  const f = factorDe(p); if (f === 1) return { f, nom: 'Unidad', ab: 'und' };
+  const nom = (p.presNom || (f === 12 ? 'Docena' : 'Caja')).trim();
+  return { f, nom, ab: ABREV_PRES[nom] || nom.toLowerCase().slice(0, 4) };
+}
+const fmtCant = (p, n) => { const { f, ab } = presDe(p); n = +n || 0; if (f === 1) return n + ' und'; const q = Math.floor(n / f), r = n % f; return [q ? q + ' ' + ab : '', r ? r + ' und' : ''].filter(Boolean).join(' + ') || '0 ' + ab; };
+const precioPres = p => Math.round((p ? p.precio : 0) * factorDe(p));   // precio de la docena/caja
+// Precio por unidad para una cantidad: escalas por volumen y, si hay unidades sueltas, esas van a su precio aparte (promedio por unidad).
+function precioPara(p, cant) {
+  let pr = p ? p.precio : 0; escalasDe(p).forEach(e => { if (cant >= e.desde) pr = e.precio; });
+  const f = factorDe(p), r = f > 1 ? cant % f : 0;
+  if (r && p.suelto && +p.precioSuelto > 0) pr = Math.round(((cant - r) * pr + r * p.precioSuelto) / cant * 100) / 100;
+  return pr;
+}
+// Texto de cantidad × precio de una línea: "2 doc × $36.000" o "1 doc + 3 und · $3.100 c/u"
+function lineaTxt(p, l) {
+  const f = factorDe(p);
+  if (f > 1 && l.cant % f === 0) return `${fmtCant(p, l.cant)} × ${fmt(l.precio * f)}`;
+  return `${fmtCant(p, l.cant)} × ${fmt(l.precio)}${f > 1 ? ' c/u' : ''}`;
+}
+const precioDoc = (p, l) => factorDe(p) > 1 && l.cant % factorDe(p) === 0 ? `${fmt(l.precio * factorDe(p))}<span style="font-size:.8em;opacity:.7">/${presDe(p).ab}</span>` : fmt(l.precio);
+const escalasTxt = p => { const { f, ab } = presDe(p); return escalasDe(p).map(e => f > 1 && e.desde % f === 0 ? `${e.desde / f}+ ${ab} ${fmt(e.precio * f)}` : `${e.desde}+ und ${fmt(e.precio)}`).join(' · '); };
+
 const sigEscala = (p, cant) => escalasDe(p).find(e => e.desde > cant);
 function saldoPedido(o) { if (o.pago !== 'credito' || !VALIDOS.includes(o.estado)) return 0; return Math.max(0, o.total - pagado(o)); }
 const pedidosCliente = cid => pedidos().filter(o => o.clienteId === cid && VALIDOS.includes(o.estado));
@@ -482,7 +510,7 @@ function barsH(items, max) {
 function textoPedido(o) {
   const c = C(o.clienteId);
   let t = `*${EMPRESA}*\nPedido ${numPedido(o)} · ${fFecha(o.fecha)}${o.factura ? '\nFactura ' + o.factura.num : ''}\nCliente: ${c.nombre}\n\n`;
-  lineasDe(o).forEach(l => t += `• ${l.cant} x ${P(l.pid).nombre} = ${fmt(l.cant * l.precio)}\n`);
+  lineasDe(o).forEach(l => t += `• ${fmtCant(P(l.pid), l.cant)} x ${P(l.pid).nombre} = ${fmt(l.cant * l.precio)}\n`);
   if (o.desc) t += `\nDescuento ${o.desc}%`;
   t += `\n*Total: ${fmt(o.total)}*\nPago: ${o.pago === 'credito' ? 'Crédito' + (o.vence ? ', vence ' + fFecha(o.vence) : '') : 'Contado'}\n¡Gracias por su compra!`;
   return t;
@@ -818,7 +846,7 @@ function vInicio() {
     <div class="card"><h3>Ventas del mes por vendedor</h3>${barsH(venItems)}</div>
     <div class="card"><h3>Ventas del mes por municipio</h3>${barsH(Object.entries(porMun).map(([l, v]) => ({ l, v })).sort((a, b) => b.v - a.v))}</div>
     <div class="card"><h3>Productos más vendidos (30 días)</h3>${barsH(topProd)}</div>
-    <div class="card"><h3>📦 Stock bajo el mínimo</h3><div class="list">${productos().filter(p => p.stock <= p.min).map(p => `<div class="it"><span class="b ${p.stock === 0 ? 'bad' : 'warn'}">${p.stock} und</span><div class="x"><b>${esc(p.nombre)}</b><span class="small mut">Mínimo ${p.min}</span></div></div>`).join('') || '<p class="mut">Todo por encima del mínimo.</p>'}</div></div>
+    <div class="card"><h3>📦 Stock bajo el mínimo</h3><div class="list">${productos().filter(p => p.stock <= p.min).map(p => `<div class="it"><span class="b ${p.stock === 0 ? 'bad' : 'warn'}">${fmtCant(p, p.stock)}</span><div class="x"><b>${esc(p.nombre)}</b><span class="small mut">Mínimo ${fmtCant(p, p.min)}</span></div></div>`).join('') || '<p class="mut">Todo por encima del mínimo.</p>'}</div></div>
   </div>`;
 }
 
@@ -865,7 +893,7 @@ function revRender() {
     </div>
     ${o.nota ? `<div class="alert info">📝 Nota del vendedor: ${esc(o.nota)}</div>` : ''}
     <div class="tw rev"><table><thead><tr><th>Producto</th><th class="n">Pedido</th><th class="n">Stock</th><th class="n">A facturar</th><th class="n">Precio</th><th class="n">Subtotal</th></tr></thead><tbody>
-      ${REV.lineas.map((l, i) => { const p = P(l.pid); return `<tr><td style="white-space:normal">${esc(p.nombre)}<div class="small mut">${esc(p.sku)}</div></td><td class="n">${l.pedido}</td><td class="n"><span class="b ${p.stock >= l.pedido ? 'ok' : p.stock ? 'warn' : 'bad'}">${p.stock}</span></td><td class="n"><input type="number" min="0" max="${p.stock}" value="${l.cant}" onchange="revCant(${i},this.value)"></td><td class="n">${fmt(l.precio)}${l.precio < p.precio ? '<div class="small" style="color:var(--ok)">x volumen</div>' : ''}</td><td class="n">${fmt(l.cant * l.precio)}</td></tr>`; }).join('')}
+      ${REV.lineas.map((l, i) => { const p = P(l.pid); return `<tr><td style="white-space:normal">${esc(p.nombre)}<div class="small mut">${esc(p.sku)}</div></td><td class="n">${fmtCant(p, l.pedido)}</td><td class="n"><span class="b ${p.stock >= l.pedido ? 'ok' : p.stock ? 'warn' : 'bad'}">${fmtCant(p, p.stock)}</span></td><td class="n"><input type="number" min="0" max="${p.stock}" value="${l.cant}" onchange="revCant(${i},this.value)">${factorDe(p) > 1 ? `<div class="small mut">und = ${fmtCant(p, l.cant)}</div>` : ''}</td><td class="n">${precioDoc(p, l)}${l.precio < p.precio ? '<div class="small" style="color:var(--ok)">x volumen</div>' : ''}</td><td class="n">${fmt(l.cant * l.precio)}</td></tr>`; }).join('')}
     </tbody></table></div>
     <div class="row" style="margin-top:12px;align-items:flex-start;justify-content:space-between">
       <div class="fg" style="flex:1 1 300px">
@@ -909,7 +937,7 @@ async function facturar() {
   $('btnFac').disabled = true;
   let n; try { n = await siguiente('fac'); } catch (e) { $('btnFac').disabled = false; return toast(e.message); }
   const T = TODAY();
-  const ajustes = REV.lineas.filter(l => l.cant !== l.pedido).map(l => `${P(l.pid).nombre}: ${l.pedido}→${l.cant}`).join('; ');
+  const ajustes = REV.lineas.filter(l => l.cant !== l.pedido).map(l => `${P(l.pid).nombre}: ${fmtCant(P(l.pid), l.pedido)}→${fmtCant(P(l.pid), l.cant)}`).join('; ');
   const upd = {
     [`pedidos/${o.id}/estado`]: 'facturado',
     [`pedidos/${o.id}/lineas`]: lineas.map(l => ({ pid: l.pid, cant: l.cant, precio: l.precio, costo: P(l.pid) ? P(l.pid).costo : 0 })),
@@ -972,7 +1000,7 @@ function alistamiento() {
     ${vis.map(o => { const c = C(o.clienteId); return `<tr><td><input type="checkbox" style="width:auto" ${ALI.sel[o.id] ? 'checked' : ''} onchange="ALI.sel['${o.id}']=this.checked;alistamiento()"></td><td>${o.factura.num}</td><td>${esc(c.nombre)}</td><td>${esc(c.municipio)}</td><td>${o.pago === 'contado' ? '<span class="b warn">Cobrar</span>' : 'Crédito'}</td><td class="n">${sum(lineasDe(o), l => l.cant)}</td><td class="n">${fmt(o.total)}</td></tr>`; }).join('') || '<tr><td colspan="7" class="mut">No hay facturas por despachar.</td></tr>'}
     </tbody></table></div>
     <h3 style="margin-top:14px">Lista de alistamiento consolidada (${items.length} referencias · ${sum(items, i => i.q)} unidades)</h3>
-    <div class="tw"><table><thead><tr><th></th><th>Código</th><th>Producto</th><th class="n">Cantidad</th></tr></thead><tbody>${items.map(i => `<tr><td style="padding:4px 8px">${htmlFoto(i.p, 'sm')}</td><td>${esc(i.p.sku)}</td><td style="white-space:normal">${esc(i.p.nombre)}</td><td class="n"><b>${i.q}</b></td></tr>`).join('')}</tbody></table></div>
+    <div class="tw"><table><thead><tr><th></th><th>Código</th><th>Producto</th><th class="n">Cantidad</th></tr></thead><tbody>${items.map(i => `<tr><td style="padding:4px 8px">${htmlFoto(i.p, 'sm')}</td><td>${esc(i.p.sku)}</td><td style="white-space:normal">${esc(i.p.nombre)}</td><td class="n"><b>${fmtCant(i.p, i.q)}</b>${factorDe(i.p) > 1 ? `<div class="small mut">${i.q} und</div>` : ''}</td></tr>`).join('')}</tbody></table></div>
     <div class="mfoot"><button class="btn sec" ${sel.length ? '' : 'disabled'} onclick="imprimirAlist()">🖨 Imprimir alistamiento y planilla</button><button class="btn acc" ${sel.length ? '' : 'disabled'} onclick="despacharSel()">🚚 Marcar ${sel.length} como despachadas</button></div>`, true);
 }
 function imprimirAlist() {
@@ -983,7 +1011,7 @@ function imprimirAlist() {
   const contado = sel.filter(o => o.pago === 'contado');
   $('print').innerHTML = `<div class="doc">
     <div class="hd"><div><h1>${esc(EMPRESA)}</h1><div>Lista de alistamiento</div></div><div style="text-align:right"><b>${esc(ruta)}</b><br>${fFecha(TODAY())} · ${sel.length} facturas</div></div>
-    <table><thead><tr><th>✓</th><th>Código</th><th>Producto</th><th>Categoría</th><th style="text-align:right">Cantidad</th></tr></thead><tbody>${items.map(i => `<tr><td>☐</td><td>${esc(i.p.sku)}</td><td>${esc(i.p.nombre)}</td><td>${esc(i.p.cat)}</td><td style="text-align:right"><b>${i.q}</b></td></tr>`).join('')}</tbody></table>
+    <table><thead><tr><th>✓</th><th>Código</th><th>Producto</th><th>Categoría</th><th style="text-align:right">Cantidad</th></tr></thead><tbody>${items.map(i => `<tr><td>☐</td><td>${esc(i.p.sku)}</td><td>${esc(i.p.nombre)}</td><td>${esc(i.p.cat)}</td><td style="text-align:right"><b>${fmtCant(i.p, i.q)}</b>${factorDe(i.p) > 1 ? ` <span style="color:#777">(${i.q} und)</span>` : ''}</td></tr>`).join('')}</tbody></table>
     <p><b>Total unidades:</b> ${sum(items, i => i.q)}</p>
     <div class="firmas"><div>Alistó</div><div>Revisó</div></div>
     <div style="page-break-before:always"></div>
@@ -1011,7 +1039,7 @@ function verPedido(id, recienFacturado, recienDespachado) {
     ${o.motivo ? `<div class="alert bad">Motivo: ${esc(o.motivo)}</div>` : ''}
     ${o.ajustado ? `<div class="alert warn">Cantidades ajustadas al facturar: ${esc(o.ajustado)}</div>` : ''}
     ${o.nota ? `<div class="alert info">📝 ${esc(o.nota)}</div>` : ''}
-    <div class="tw"><table><thead><tr><th>Producto</th><th class="n">Cant.</th><th class="n">Precio</th><th class="n">Subtotal</th></tr></thead><tbody>${lineasDe(o).map(l => `<tr><td style="white-space:normal">${esc(P(l.pid).nombre)}</td><td class="n">${l.cant}</td><td class="n">${fmt(l.precio)}</td><td class="n">${fmt(l.cant * l.precio)}</td></tr>`).join('')}</tbody></table></div>
+    <div class="tw"><table><thead><tr><th>Producto</th><th class="n">Cant.</th><th class="n">Precio</th><th class="n">Subtotal</th></tr></thead><tbody>${lineasDe(o).map(l => `<tr><td style="white-space:normal">${esc(P(l.pid).nombre)}</td><td class="n">${fmtCant(P(l.pid), l.cant)}</td><td class="n">${precioDoc(P(l.pid), l)}</td><td class="n">${fmt(l.cant * l.precio)}</td></tr>`).join('')}</tbody></table></div>
     <div style="max-width:320px;margin-left:auto;margin-top:10px">
       <div class="tot"><span>Subtotal</span><span>${fmt(bruto)}</span></div>
       ${o.desc ? `<div class="tot"><span>Descuento ${o.desc}%</span><span>−${fmt(bruto - o.total)}</span></div>` : ''}
@@ -1046,7 +1074,7 @@ function docRemision(o) {
     <div class="hd"><div style="display:flex;align-items:center;gap:10px">${logoDoc(52)}<div><h1>${esc(EMPRESA)}</h1><div>Remisión de despacho</div></div></div><div style="text-align:right"><b>${o.factura.num}</b><br>Fecha: ${fFecha(o.factura.fecha)}<br>${o.factura.externa ? 'Fact. electrónica: ' + esc(o.factura.externa) + '<br>' : ''}Pedido: ${numPedido(o)}</div></div>
     <p><b>Cliente:</b> ${esc(c.nombre)} · ${esc(c.contacto)} · Tel. ${esc(c.tel)}<br><b>Dirección:</b> ${esc(c.barrio)}, ${esc(c.municipio)}<br><b>Vendedor:</b> ${esc(V(o.vendedorId).nombre)} · <b>Pago:</b> ${o.pago === 'credito' ? 'Crédito, vence ' + fFecha(o.vence) : 'Contado'}</p>
     <table><thead><tr><th>Código</th><th>Producto</th><th style="text-align:right">Cant.</th><th style="text-align:right">Precio</th><th style="text-align:right">Subtotal</th></tr></thead><tbody>
-    ${lineasDe(o).map(l => `<tr><td>${esc(P(l.pid).sku)}</td><td>${esc(P(l.pid).nombre)}</td><td style="text-align:right">${l.cant}</td><td style="text-align:right">${fmt(l.precio)}</td><td style="text-align:right">${fmt(l.cant * l.precio)}</td></tr>`).join('')}</tbody></table>
+    ${lineasDe(o).map(l => `<tr><td>${esc(P(l.pid).sku)}</td><td>${esc(P(l.pid).nombre)}</td><td style="text-align:right">${fmtCant(P(l.pid), l.cant)}</td><td style="text-align:right">${precioDoc(P(l.pid), l)}</td><td style="text-align:right">${fmt(l.cant * l.precio)}</td></tr>`).join('')}</tbody></table>
     <div style="width:260px;margin-left:auto;margin-top:8px"><div class="tot"><span>Subtotal</span><span>${fmt(bruto)}</span></div>${o.desc ? `<div class="tot"><span>Descuento ${o.desc}%</span><span>−${fmt(bruto - o.total)}</span></div>` : ''}<div class="tot big"><span>Total</span><span>${fmt(o.total)}</span></div></div>
     ${o.nota ? `<p><b>Nota:</b> ${esc(o.nota)}</p>` : ''}
     <div class="firmas"><div>Despachó</div><div>Recibí conforme (firma y sello)</div></div>
@@ -1079,7 +1107,7 @@ function imprimirVenta(id) {
       ${cel('Dirección', `${esc(c.barrio)}, ${esc(c.municipio)}`)}${cel('Vendedor', esc(V(o.vendedorId).nombre))}${cel('Referencia DIAN', esc(o.factura.externa || '—'))}</tr></table>
     <table style="width:100%;border-collapse:collapse"><thead><tr style="background:#eee">
       <th style="${B};padding:5px;width:26px">#</th><th style="${B};padding:5px">Ref.</th><th style="${B};padding:5px">Detalle</th><th style="${B};padding:5px;text-align:right">Cant.</th><th style="${B};padding:5px;text-align:right">Vr. unit</th><th style="${B};padding:5px;text-align:right">Vr. total</th></tr></thead><tbody>
-      ${ls.map((l, i) => `<tr><td style="${B};padding:4px;text-align:center">${i + 1}</td><td style="${B};padding:4px">${esc(P(l.pid).sku)}</td><td style="${B};padding:4px">${esc(P(l.pid).nombre)}</td><td style="${B};padding:4px;text-align:right">${l.cant}</td><td style="${B};padding:4px;text-align:right">${fmt(l.precio)}</td><td style="${B};padding:4px;text-align:right">${fmt(l.cant * l.precio)}</td></tr>`).join('')}
+      ${ls.map((l, i) => `<tr><td style="${B};padding:4px;text-align:center">${i + 1}</td><td style="${B};padding:4px">${esc(P(l.pid).sku)}</td><td style="${B};padding:4px">${esc(P(l.pid).nombre)}</td><td style="${B};padding:4px;text-align:right">${fmtCant(P(l.pid), l.cant)}</td><td style="${B};padding:4px;text-align:right">${precioDoc(P(l.pid), l)}</td><td style="${B};padding:4px;text-align:right">${fmt(l.cant * l.precio)}</td></tr>`).join('')}
     </tbody></table>
     <div style="margin-top:6px"><b>Observaciones:</b> ${cred ? 'CRÉDITO · vence ' + fFecha(o.vence) : 'CONTADO'}${o.nota ? ' · ' + esc(o.nota) : ''}</div>
     <table style="width:100%;border-collapse:collapse;margin-top:10px"><tr>
@@ -1313,7 +1341,7 @@ function tablaInv() {
   const q = FI.q.toLowerCase().trim(), lim = addDays(TODAY(), -30), rot = {}, comp = {};
   pedidos().forEach(o => { if (VALIDOS.includes(o.estado) && o.fecha >= lim) lineasDe(o).forEach(l => rot[l.pid] = (rot[l.pid] || 0) + l.cant); if (o.estado === 'por_aprobar') lineasDe(o).forEach(l => comp[l.pid] = (comp[l.pid] || 0) + l.cant); });
   const rows = productos().filter(p => (!q || (p.sku + ' ' + p.nombre).toLowerCase().includes(q)) && (!FI.cat || p.cat === FI.cat) && (!FI.bajo || p.stock <= p.min) && (!FI.nofoto || !p.foto));
-  $('tbInv').innerHTML = rows.map(p => { const mg = (p.precio - p.costo) / p.precio * 100, r = rot[p.id] || 0, dias = r ? Math.round(p.stock / (r / 30)) : null; return `<tr class="clk" onclick="formProducto('${p.id}')"><td style="padding:5px 8px">${htmlFoto(p, 'sm')}</td><td>${esc(p.sku)}</td><td style="white-space:normal;min-width:200px"><b>${esc(p.nombre)}</b></td><td class="small">${esc(p.cat)}</td><td class="n"><span class="b ${p.stock === 0 ? 'bad' : p.stock <= p.min ? 'warn' : 'ok'}">${p.stock}</span></td><td class="n">${comp[p.id] ? `<span style="color:${comp[p.id] > p.stock ? 'var(--bad)' : 'inherit'}">${comp[p.id]}</span>` : '—'}</td><td class="n">${p.min}</td><td class="n">${fmt(p.costo)}</td><td class="n">${fmt(p.precio)}${escalasDe(p).length ? `<div class="small" style="color:var(--ok)">${escalasDe(p).length} escala${escalasDe(p).length > 1 ? 's' : ''}</div>` : ''}</td><td class="n">${p.costo > 0 ? mg.toFixed(0) + '%' : '<span class="small mut">sin costo</span>'}</td><td class="n">${r} und<div class="small mut">${dias != null ? 'alcanza ~' + dias + ' días' : 'sin movimiento'}</div></td></tr>`; }).join('') || '<tr><td colspan="11" class="mut">Sin resultados.</td></tr>';
+  $('tbInv').innerHTML = rows.map(p => { const mg = (p.precio - p.costo) / p.precio * 100, r = rot[p.id] || 0, dias = r ? Math.round(p.stock / (r / 30)) : null; return `<tr class="clk" onclick="formProducto('${p.id}')"><td style="padding:5px 8px">${htmlFoto(p, 'sm')}</td><td>${esc(p.sku)}</td><td style="white-space:normal;min-width:200px"><b>${esc(p.nombre)}</b></td><td class="small">${esc(p.cat)}</td><td class="n"><span class="b ${p.stock === 0 ? 'bad' : p.stock <= p.min ? 'warn' : 'ok'}">${fmtCant(p, p.stock)}</span></td><td class="n">${comp[p.id] ? `<span style="color:${comp[p.id] > p.stock ? 'var(--bad)' : 'inherit'}">${fmtCant(p, comp[p.id])}</span>` : '—'}</td><td class="n">${p.min}</td><td class="n">${factorDe(p) > 1 ? fmt(p.costo * factorDe(p)) + '<div class="small mut">/' + presDe(p).ab + '</div>' : fmt(p.costo)}</td><td class="n">${factorDe(p) > 1 ? fmt(precioPres(p)) + '<div class="small mut">/' + presDe(p).ab + ' x ' + factorDe(p) + '</div>' : fmt(p.precio)}${escalasDe(p).length ? `<div class="small" style="color:var(--ok)">${escalasDe(p).length} escala${escalasDe(p).length > 1 ? 's' : ''}</div>` : ''}</td><td class="n">${p.costo > 0 ? mg.toFixed(0) + '%' : '<span class="small mut">sin costo</span>'}</td><td class="n">${r} und<div class="small mut">${dias != null ? 'alcanza ~' + dias + ' días' : 'sin movimiento'}</div></td></tr>`; }).join('') || '<tr><td colspan="11" class="mut">Sin resultados.</td></tr>';
 }
 function formProducto(pid) {
   const p = pid ? P(pid) : { sku: '', nombre: '', cat: 'Cremas para peinar', costo: '', precio: '', min: '', stock: 0 };
@@ -1322,11 +1350,18 @@ function formProducto(pid) {
     ${pid ? `<div class="row" style="align-items:center;gap:14px;margin-bottom:14px">${htmlFoto(p, 'big" style="width:120px;margin:0;font-size:44px')}<div class="row" style="gap:8px"><label class="btn acc btnfile sm">📷 ${p.foto ? 'Cambiar foto' : 'Subir foto'}<input type="file" accept="image/*" onchange="fotoAdmin('${pid}',this)"></label>${p.foto ? `<button class="btn sec sm" onclick="if(confirm('¿Quitar la foto?')){quitarFoto('${pid}');formProducto('${pid}');render()}">Quitar</button>` : ''}${p.foto ? `<div class="small mut" style="width:100%">Subida el ${new Date(p.foto).toLocaleDateString('es-CO')}${p.fotoPor ? ' por ' + esc(p.fotoPor) : ''}</div>` : ''}</div></div>` : '<div class="small mut" style="margin-bottom:10px">Guarda el producto y luego ábrelo para agregarle la foto.</div>'}
     <div class="fg"><label>Código <span class="small mut">(opcional)</span><input id="fpSku" value="${esc(p.sku)}" placeholder="Se genera solo si lo dejas vacío"></label><label>Categoría<select id="fpCat" onchange="$('fpCatN').style.display = this.value === '__nueva' ? '' : 'none'; if (this.value === '__nueva') $('fpCatN').focus()">${cats.map(c => `<option value="${esc(c)}" ${c === p.cat ? 'selected' : ''}>${esc(c)}</option>`).join('')}<option value="__nueva">➕ Nueva categoría…</option></select><input id="fpCatN" placeholder="Nombre de la nueva categoría" style="display:none;margin-top:6px"></label></div>
     <label class="f" style="margin-top:10px">Nombre / descripción<input id="fpNomP" value="${esc(p.nombre)}"></label>
+    <div class="card" style="margin:10px 0 0;padding:10px 12px;background:#faf7f9">
+      <div class="fg"><label>Se vende por<select id="fpPres" onchange="presUI()">${PRES_OPC.map(o => `<option ${o === presDe(p).nom ? 'selected' : ''}>${o}</option>`).join('')}${PRES_OPC.includes(presDe(p).nom) ? '' : `<option selected>${esc(presDe(p).nom)}</option>`}</select></label>
+        <label id="fpFacL">Unidades por <span class="fpPN"></span><input id="fpFac" type="number" min="2" value="${factorDe(p) > 1 ? factorDe(p) : 12}" onchange="presUI()"></label></div>
+      <label id="fpSuelL" class="small" style="display:flex;gap:6px;align-items:center;margin-top:8px"><input type="checkbox" id="fpSuel" style="width:auto" ${p.suelto ? 'checked' : ''} onchange="presUI()"> También se vende suelto (por unidad)</label>
+      <label id="fpPSuL" class="f" style="margin-top:6px">Precio de la unidad suelta<input id="fpPSu" inputmode="decimal" value="${p.precioSuelto || ''}" placeholder="Ej: 3500"></label>
+      <div class="small mut" id="fpPresAy" style="margin-top:6px"></div>
+    </div>
     <div class="fg" style="margin-top:10px">
-      <label>Costo ${pid ? '' : '<span class="small mut">(opcional · se toma de la factura)</span>'}<input id="fpCos" type="number" min="0" value="${p.costo || ''}" placeholder="Se llena con la entrada de mercancía" oninput="margenPrev()"></label>
-      <label>Precio mayorista<input id="fpPre" type="number" min="0" value="${p.precio}" oninput="margenPrev()"></label>
-      <label>Stock mínimo <span class="small mut">(opcional)</span><input id="fpMin" type="number" min="0" value="${p.min || ''}" placeholder="Para alertas de reposición"></label>
-      ${pid ? `<label>Stock actual <a href="#" onclick="event.preventDefault();ajustarStock('${pid}')" style="font-weight:600">· Ajustar</a><input value="${p.stock}" disabled></label>` : `<label>Stock inicial <span class="small mut">(opcional)</span><input id="fpSto" type="number" min="0" value="" placeholder="Normalmente entra con la compra"></label>`}
+      <label><span id="fpCosT">Costo</span> ${pid ? '' : '<span class="small mut">(opcional · se toma de la factura)</span>'}<input id="fpCos" type="number" min="0" step="any" value="${p.costo ? Math.round(p.costo * factorDe(p) * 100) / 100 : ''}" placeholder="Se llena con la entrada de mercancía" oninput="margenPrev()"></label>
+      <label><span id="fpPreT">Precio mayorista</span><input id="fpPre" type="number" min="0" step="any" value="${p.precio ? Math.round(p.precio * factorDe(p) * 100) / 100 : ''}" oninput="margenPrev()"></label>
+      <label>Stock mínimo <span class="small mut">(unidades · opcional)</span><input id="fpMin" type="number" min="0" value="${p.min || ''}" placeholder="Para alertas de reposición"></label>
+      ${pid ? `<label>Stock actual <a href="#" onclick="event.preventDefault();ajustarStock('${pid}')" style="font-weight:600">· Ajustar</a><input value="${fmtCant(p, p.stock)}${factorDe(p) > 1 ? ' (' + p.stock + ' und)' : ''}" disabled></label>` : `<label>Stock inicial <span class="small mut">(unidades · opcional)</span><input id="fpSto" type="number" min="0" value="" placeholder="Normalmente entra con la compra"></label>`}
     </div>
     <div class="small mut" id="mgPrev" style="margin-top:8px"></div>
     <h3 style="margin:14px 0 4px">Precios por cantidad <span class="small mut" style="font-weight:400">(opcional)</span></h3>
@@ -1335,6 +1370,26 @@ function formProducto(pid) {
     <div class="small mut" id="esPrev" style="margin-top:6px"></div>
     ${pid ? '<div class="small mut" style="margin-top:4px">El stock cambia con facturas, anulaciones y entradas de mercancía.</div>' : ''}
     <div class="mfoot"><button class="btn sec" onclick="closeModal()">Cancelar</button><button class="btn" onclick="guardarProducto('${pid || ''}')">Guardar</button></div>`);
+  FP_F = factorDe(p); presUI();
+}
+// Presentación en el formulario: costo y precio se escriben POR PRESENTACIÓN (ej. por docena) y se guardan por unidad.
+const PRES_OPC = ['Unidad', 'Docena', 'Caja', 'Paquete', 'Tira', 'Display', 'Bulto'];
+let FP_F = 1;
+function fpFactor() { const n = $('fpPres').value; return n === 'Unidad' ? 1 : n === 'Docena' ? 12 : Math.max(2, parseInt($('fpFac').value, 10) || 0); }
+function presUI() {
+  const n = $('fpPres').value, f = fpFactor(), u = f > 1, nm = n.toLowerCase();
+  if (n === 'Docena') $('fpFac').value = 12;
+  $('fpFacL').style.display = u && n !== 'Docena' ? '' : 'none';
+  $('fpSuelL').style.display = u ? 'flex' : 'none';
+  $('fpPSuL').style.display = u && $('fpSuel').checked ? '' : 'none';
+  document.querySelectorAll('.fpPN').forEach(x => x.textContent = nm);
+  if (f !== FP_F) {   // cambió la presentación: se convierten los valores escritos para que el precio por unidad no cambie
+    ['fpCos', 'fpPre'].forEach(id => { const v = +$(id).value; if (v > 0) $(id).value = Math.round(v * f / FP_F * 100) / 100; });
+    FP_F = f;
+  }
+  $('fpCosT').textContent = u ? 'Costo por ' + nm : 'Costo';
+  $('fpPreT').textContent = u ? 'Precio por ' + nm : 'Precio mayorista';
+  $('fpPresAy').textContent = u ? `El inventario, la factura del proveedor y los precios por cantidad van en UNIDADES. El vendedor y el catálogo verán "${n} x ${f}" y el + sumará ${f} unidades.` : '';
   margenPrev();
 }
 async function fotoAdmin(pid, input) {
@@ -1344,8 +1399,9 @@ async function fotoAdmin(pid, input) {
   catch (e) { toast(e.message); }
 }
 function margenPrev() {
-  const c = +$('fpCos').value, p = +$('fpPre').value; $('mgPrev').textContent = !(p > 0) ? '' : c > 0 ? `Margen ${((p - c) / p * 100).toFixed(1)}% · ganancia por unidad ${fmt(p - c)}` : 'Costo pendiente: el margen se calcula cuando ingreses la factura de compra.';
-  const es = leerEscalas(); if ($('esPrev')) $('esPrev').textContent = c > 0 ? es.map(e => `${e.desde}+ und: margen ${((e.precio - c) / e.precio * 100).toFixed(1)}%`).join(' · ') : '';
+  const f = $('fpPres') ? fpFactor() : 1, nm = f > 1 ? $('fpPres').value.toLowerCase() : 'unidad';
+  const c = +$('fpCos').value, p = +$('fpPre').value; $('mgPrev').textContent = !(p > 0) ? '' : (c > 0 ? `Margen ${((p - c) / p * 100).toFixed(1)}% · ganancia por ${nm} ${fmt(p - c)}` : 'Costo pendiente: el margen se calcula cuando ingreses la factura de compra.') + (f > 1 ? ` · por unidad: ${fmt(p / f)}` : '');
+  const cu = c / f, es = leerEscalas(); if ($('esPrev')) $('esPrev').textContent = c > 0 ? es.map(e => `${e.desde}+ und: margen ${((e.precio - cu) / e.precio * 100).toFixed(1)}%`).join(' · ') : '';
 }
 function leerEscalas() {
   const d = [...document.querySelectorAll('.fpEsD')], pr = [...document.querySelectorAll('.fpEsP')];
@@ -1356,7 +1412,13 @@ function guardarProducto(pid) {
   if (!cat) return toast('Escribe el nombre de la nueva categoría');
   const d = { sku: $('fpSku').value.trim().toUpperCase(), cat, nombre: $('fpNomP').value.trim(), costo: +$('fpCos').value, precio: +$('fpPre').value, min: +$('fpMin').value || 0 };
   if (!d.nombre) return toast('Escribe el nombre del producto');
-  d.costo = d.costo > 0 ? d.costo : 0; // sin costo: queda pendiente hasta la primera entrada de mercancía
+  const fF = fpFactor(), fN = $('fpPres').value;
+  if (fF > 1 && !(parseInt($('fpFac').value, 10) >= 2)) return toast('Escribe cuántas unidades trae la ' + fN.toLowerCase());
+  d.costo = d.costo > 0 ? r2(d.costo / fF) : 0; d.precio = d.precio > 0 ? r2(d.precio / fF) : 0;   // se guarda por UNIDAD
+  d.factor = fF > 1 ? fF : null; d.presNom = fF > 1 ? fN : null;
+  d.suelto = fF > 1 && $('fpSuel').checked ? true : null;
+  d.precioSuelto = d.suelto ? (numIn($('fpPSu').value) || null) : null;
+  if (d.suelto && !d.precioSuelto) return toast('Escribe el precio de la unidad suelta'); // sin costo: queda pendiente hasta la primera entrada de mercancía
   if (!(d.precio > 0)) return toast('Escribe el precio de venta');
   if (!d.sku) { // código automático: P0001, P0002… el siguiente libre
     const usados = new Set(productos().map(x => x.sku)); let n = productos().length + 1;
@@ -1481,7 +1543,7 @@ function entradaMercancia(cid) {
       <div class="small mut" style="margin-top:6px">El costo lo toma de esta factura. Stock mínimo, foto y escalas los puedes poner después en Inventario.</div>
       <div class="row" style="margin-top:8px;justify-content:flex-end"><button class="btn sm sec" onclick="$('enNP').style.display='none'">Cancelar</button><button class="btn sm ok" onclick="enCrearProd()">✓ Crear y seleccionar</button></div>
     </div>
-    <datalist id="dlProd2">${productos().map(p => `<option value="${esc(p.sku + ' · ' + p.nombre)}">Stock ${p.stock} · mín ${p.min}</option>`).join('')}</datalist>
+    <datalist id="dlProd2">${productos().map(p => `<option value="${esc(p.sku + ' · ' + p.nombre)}">Stock ${fmtCant(p, p.stock)} · mín ${p.min}</option>`).join('')}</datalist>
     <div id="enBody" style="margin-top:12px"></div>`, true);
   $('enProd').addEventListener('keydown', e => { if (e.key === 'Enter') enAdd(); });
   if (ce) {
@@ -1532,7 +1594,7 @@ function enCrearProd() {
   if (productos().some(x => x.sku === sku)) return toast('Ya existe un producto con ese código');
   const id = uid('P');
   guardar({ ['productos/' + id]: { id, sku, cat, nombre, costo: 0, precio, min: 0, escalas: null, stock: 0 } });
-  $('dlProd2').innerHTML = productos().map(p => `<option value="${esc(p.sku + ' · ' + p.nombre)}">Stock ${p.stock} · mín ${p.min}</option>`).join('');
+  $('dlProd2').innerHTML = productos().map(p => `<option value="${esc(p.sku + ' · ' + p.nombre)}">Stock ${fmtCant(p, p.stock)} · mín ${p.min}</option>`).join('');
   $('enProd').value = sku + ' · ' + nombre; $('enCos').value = '';
   ['enNPn', 'enNPp', 'enNPs'].forEach(k => $(k).value = ''); $('enNP').style.display = 'none';
   $('enCant').focus(); $('enCant').select();
@@ -1547,7 +1609,7 @@ function enAdd() {
 function enRender() {
   const LC = enCostos(), flete = enFlete(), base = sum(ENT.lineas, l => l.cant * l.costo);
   enPagoUI();
-  $('enBody').innerHTML = `<div class="tw"><table><thead><tr><th>Producto</th><th class="n">Cant.</th><th class="n">Costo factura</th>${flete ? '<th class="n">+ Flete c/u</th><th class="n">Costo final</th>' : ''}<th class="n">Subtotal</th><th></th></tr></thead><tbody>${LC.map((l, i) => { const p = P(l.pid); return `<tr><td style="white-space:normal">${esc(p.nombre)}${l.final !== p.costo ? `<div class="small" style="color:var(--warn)">Costo anterior ${fmt(p.costo)} → margen ${p.precio ? ((p.precio - l.final) / p.precio * 100).toFixed(0) : 0}%</div>` : ''}</td><td class="n"><input type="number" min="1" value="${l.cant}" style="width:70px;text-align:right" onchange="ENT.lineas[${i}].cant=Math.max(1,parseInt(this.value,10)||1);enRender()"></td><td class="n"><input type="text" inputmode="decimal" value="${String(l.costo).replace('.', ',')}" style="width:100px;text-align:right" onchange="const v=numIn(this.value);if(v>0)ENT.lineas[${i}].costo=v;enRender()"></td>${flete ? `<td class="n">${fmtC(l.fleteU)}</td><td class="n"><b>${fmtC(l.final)}</b></td>` : ''}<td class="n">${fmt(l.sub)}</td><td><button class="btn sm sec" onclick="ENT.lineas.splice(${i},1);enRender()">✕</button></td></tr>`; }).join('') || `<tr><td colspan="${flete ? 7 : 5}" class="mut">Agrega los productos de la factura del proveedor.</td></tr>`}</tbody></table></div>
+  $('enBody').innerHTML = `<div class="tw"><table><thead><tr><th>Producto</th><th class="n">Cant.</th><th class="n">Costo factura</th>${flete ? '<th class="n">+ Flete c/u</th><th class="n">Costo final</th>' : ''}<th class="n">Subtotal</th><th></th></tr></thead><tbody>${LC.map((l, i) => { const p = P(l.pid); return `<tr><td style="white-space:normal">${esc(p.nombre)}${l.final !== p.costo ? `<div class="small" style="color:var(--warn)">Costo anterior ${fmt(p.costo)} → margen ${p.precio ? ((p.precio - l.final) / p.precio * 100).toFixed(0) : 0}%</div>` : ''}</td><td class="n"><input type="number" min="1" value="${l.cant}" style="width:70px;text-align:right" onchange="ENT.lineas[${i}].cant=Math.max(1,parseInt(this.value,10)||1);enRender()">${factorDe(p) > 1 ? `<div class="small mut">= ${fmtCant(p, l.cant)}</div>` : ''}</td><td class="n"><input type="text" inputmode="decimal" value="${String(l.costo).replace('.', ',')}" style="width:100px;text-align:right" onchange="const v=numIn(this.value);if(v>0)ENT.lineas[${i}].costo=v;enRender()"></td>${flete ? `<td class="n">${fmtC(l.fleteU)}</td><td class="n"><b>${fmtC(l.final)}</b></td>` : ''}<td class="n">${fmt(l.sub)}</td><td><button class="btn sm sec" onclick="ENT.lineas.splice(${i},1);enRender()">✕</button></td></tr>`; }).join('') || `<tr><td colspan="${flete ? 7 : 5}" class="mut">Agrega los productos de la factura del proveedor.</td></tr>`}</tbody></table></div>
   ${flete ? `<div class="tot" style="max-width:300px;margin-left:auto"><span>Mercancía</span><span>${fmt(base)}</span></div><div class="tot" style="max-width:300px;margin-left:auto"><span>Flete</span><span>${fmt(flete)}</span></div>` : ''}
   <div class="tot big" style="max-width:300px;margin-left:auto"><span>Total compra</span><span>${fmt(base + flete)}</span></div>
   <div class="mfoot"><button class="btn sec" onclick="closeModal()">Cancelar</button><button class="btn" id="btnEnt" onclick="guardarEntrada()">${ENT.edit ? 'Guardar cambios' : 'Guardar entrada'}</button></div>`;
@@ -1938,7 +2000,7 @@ function ajustarStock(pid) {
   const p = P(pid);
   openModal('Ajustar stock · ' + p.nombre, `
     <div class="small mut" style="margin-bottom:8px">Úsalo para corregir errores de conteo, averías o pérdidas. Las compras y ventas ya mueven el stock solas.</div>
-    <div class="fg"><label>Stock actual<input value="${p.stock}" disabled></label><label>Stock real (contado)<input id="ajN" type="number" min="0" value="${p.stock}" oninput="$('ajD').textContent=(+this.value-${p.stock}>0?'+':'')+(+this.value-${p.stock})+' und'"></label></div>
+    <div class="fg"><label>Stock actual (und)<input value="${p.stock}${factorDe(p) > 1 ? ' = ' + fmtCant(p, p.stock) : ''}" disabled></label><label>Stock real contado (und)<input id="ajN" type="number" min="0" value="${p.stock}" oninput="$('ajD').textContent=(+this.value-${p.stock}>0?'+':'')+(+this.value-${p.stock})+' und'"></label></div>
     <div class="small" id="ajD" style="margin-top:6px;font-weight:700">0 und</div>
     <label class="f" style="margin-top:10px">Motivo<select id="ajM"><option>Error de digitación</option><option>Conteo físico</option><option>Producto averiado / vencido</option><option>Pérdida o robo</option><option>Otro</option></select></label>
     <label class="f" style="margin-top:10px">Nota (opcional)<input id="ajNo"></label>
