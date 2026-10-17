@@ -143,7 +143,9 @@ const F = { q: '', cat: '' };
 let fbRoot = null;
 function publico(p) {
   const esc_ = vals(p.escalas).filter(e => e && e.desde > 1 && e.precio > 0).sort((a, b) => a.desde - b.desde).map(e => ({ desde: e.desde, precio: e.precio }));
-  return { id: p.id, sku: p.sku || '', nombre: p.nombre || '', cat: p.cat || 'Otros', precio: +p.precio || 0, escalas: esc_, hay: (+p.stock || 0) > 0, foto: p.foto || null };
+  const f = Math.max(1, parseInt(p.factor, 10) || 1);
+  return { id: p.id, sku: p.sku || '', nombre: p.nombre || '', cat: p.cat || 'Otros', precio: +p.precio || 0, escalas: esc_, hay: (+p.stock || 0) >= (p.suelto && +p.precioSuelto > 0 ? 1 : f), foto: p.foto || null,
+    factor: f, presNom: f > 1 ? (p.presNom || (f === 12 ? 'Docena' : 'Caja')) : null, suelto: f > 1 && !!p.suelto && +p.precioSuelto > 0, precioSuelto: +p.precioSuelto || 0 };
 }
 function recibir(parte, v) {
   if (parte === 'productos') D.prods = vals(v).filter(p => p && p.id && p.nombre && +p.precio > 0).map(publico);
@@ -196,7 +198,17 @@ const obs = 'IntersectionObserver' in window ? new IntersectionObserver(es => es
 function pintarFotos() { document.querySelectorAll('[data-foto]:not([data-ok])').forEach(el => obs ? obs.observe(el) : ponerFoto(el)); }
 
 /* ---------- PANTALLA ---------- */
-const precioPara = (p, cant) => { let pr = p.precio; p.escalas.forEach(e => { if (cant >= e.desde) pr = e.precio; }); return pr; };
+// Precios y cantidades por UNIDAD; la presentación (docena, caja…) solo cambia cómo se muestra y se pide
+const ABREV = { Docena: 'doc', Caja: 'cj', Paquete: 'paq', Tira: 'tira', Display: 'disp', Bulto: 'bulto' };
+const abDe = p => p.factor > 1 ? (ABREV[p.presNom] || String(p.presNom).toLowerCase().slice(0, 4)) : 'und';
+const fmtCant = (p, n) => { if (p.factor === 1) return n + ' und'; const q = Math.floor(n / p.factor), r = n % p.factor; return [q ? q + ' ' + abDe(p) : '', r ? r + ' und' : ''].filter(Boolean).join(' + '); };
+function precioPara(p, cant) {
+  let pr = p.precio; p.escalas.forEach(e => { if (cant >= e.desde) pr = e.precio; });
+  const r = p.factor > 1 ? cant % p.factor : 0;
+  if (r && p.suelto) pr = ((cant - r) * pr + r * p.precioSuelto) / cant;
+  return pr;
+}
+const escTxt = p => p.escalas.map(e => p.factor > 1 && e.desde % p.factor === 0 ? `${e.desde / p.factor}+ ${abDe(p)} ${fmt(e.precio * p.factor)}` : `${e.desde}+ und ${fmt(e.precio)}`).join(' · ');
 const visibles = () => D.prods.filter(p => p.hay || !D.cat.ocultarAgotados).sort((a, b) => a.cat.localeCompare(b.cat) || a.nombre.localeCompare(b.nombre));
 function pintarTodo() { pintarMarca(); pintarInfo(); pintar(); }
 function pintarMarca() {
@@ -225,13 +237,16 @@ function pintar() {
   pintarFotos(); barra();
 }
 function tarjeta(p) {
-  const n = CART[p.id] || 0;
+  const n = CART[p.id] || 0, f = p.factor, r = n % f;
   return `<div class="prod ${n ? 'sel' : ''}" id="t_${p.id}">
     <div class="ph" data-foto="${p.id}">${ICONO_CAT[p.cat] || '📦'}${p.hay ? '' : '<span class="ago">Agotado</span>'}</div>
     <div class="pb"><div class="nom">${esc(p.nombre)}</div><div class="cod">${esc(p.sku)}</div>
-      <div class="pre">${fmt(p.precio)}</div>
-      ${p.escalas.length ? `<div class="esc">${p.escalas.map(e => `${e.desde}+ und ${fmt(e.precio)}`).join(' · ')}</div>` : ''}
-      ${p.hay ? `<div class="qty"><button onclick="cant('${p.id}',${n - 1})" aria-label="Menos">−</button><input type="number" inputmode="numeric" min="0" value="${n || ''}" placeholder="0" onchange="cant('${p.id}',this.value)"><button onclick="cant('${p.id}',${n + 1})" aria-label="Más">+</button></div>` : ''}
+      ${f > 1 ? `<div class="cod" style="color:var(--pri);font-weight:700">${esc(p.presNom)} x ${f} und</div>` : ''}
+      <div class="pre">${fmt(Math.round(p.precio * f))}${f > 1 ? `<span style="font-size:12px;font-weight:600"> /${abDe(p)}</span>` : ''}</div>
+      ${f > 1 ? `<div class="cod">${fmt(p.precio)} c/u${p.suelto ? ' · suelta ' + fmt(p.precioSuelto) : ''}</div>` : ''}
+      ${p.escalas.length ? `<div class="esc">${escTxt(p)}</div>` : ''}
+      ${p.hay ? `<div class="qty"><button onclick="cant('${p.id}',${Math.max(0, n - f)})" aria-label="Menos">−</button><input type="number" inputmode="numeric" min="0" value="${Math.floor(n / f) || ''}" placeholder="0" onchange="cant('${p.id}',(parseInt(this.value,10)||0)*${f}+${r})"><button onclick="cant('${p.id}',${n + f})" aria-label="Más">+</button></div>
+      ${f > 1 && p.suelto ? `<div class="cod" style="margin-top:4px;display:flex;align-items:center;gap:6px">Sueltas: <button class="btn sm sec" style="padding:2px 9px" onclick="cant('${p.id}',${r ? n - 1 : n})">−</button><b>${r}</b><button class="btn sm sec" style="padding:2px 9px" onclick="cant('${p.id}',${r < f - 1 ? n + 1 : n})">+</button></div>` : ''}` : ''}
     </div></div>`;
 }
 function cant(pid, n) {
@@ -248,14 +263,14 @@ function barra() {
   if (!ls.length) { b.style.display = 'none'; return; }
   const tot = ls.reduce((s, x) => s + x.c * precioPara(x.p, x.c), 0);
   b.style.display = 'block';
-  b.innerHTML = `<div><div class="grow"><div class="small" style="opacity:.85">${ls.length} productos · ${ls.reduce((s, x) => s + x.c, 0)} und</div><b style="font-size:17px">${fmt(tot)}</b></div><button class="btn ok" onclick="revisar()">Pedir por WhatsApp</button></div>`;
+  b.innerHTML = `<div><div class="grow"><div class="small" style="opacity:.85">${ls.length} producto${ls.length > 1 ? 's' : ''}</div><b style="font-size:17px">${fmt(tot)}</b></div><button class="btn ok" onclick="revisar()">Pedir por WhatsApp</button></div>`;
 }
 
 /* ---------- PEDIDO POR WHATSAPP ---------- */
 function revisar() {
   const ls = lineas(), tot = ls.reduce((s, x) => s + x.c * precioPara(x.p, x.c), 0), min = +(D.cat || {}).minimo || 0, cli = lsGet(PFX + 'catalogo_cliente', {});
   $('mbox').innerHTML = `<h3>Tu pedido</h3>
-    ${ls.map(x => `<div class="lin"><span>${x.c} × ${esc(x.p.nombre)}</span><b>${fmt(x.c * precioPara(x.p, x.c))}</b></div>`).join('')}
+    ${ls.map(x => `<div class="lin"><span>${fmtCant(x.p, x.c)} × ${esc(x.p.nombre)}</span><b>${fmt(x.c * precioPara(x.p, x.c))}</b></div>`).join('')}
     <div class="tot"><span>Total aproximado</span><span>${fmt(tot)}</span></div>
     ${min && tot < min ? `<div class="nota" style="background:#fbe5e2;color:#8a2a1f;border-radius:10px;padding:10px;font-weight:600">El pedido mínimo es ${fmt(min)}. Te faltan ${fmt(min - tot)}.</div>` : ''}
     <label class="f">Nombre de tu tienda o negocio<input id="pcN" value="${esc(cli.n || '')}" placeholder="Ej: Tienda La Esquina"></label>
@@ -271,7 +286,7 @@ function enviar() {
   if (!n) { toast('Escribe el nombre de tu tienda'); return $('pcN').focus(); }
   lsSet(PFX + 'catalogo_cliente', { n, b });
   const ls = lineas(), tot = ls.reduce((s, x) => s + x.c * precioPara(x.p, x.c), 0), o = $('pcO').value.trim();
-  const txt = `🛒 *Pedido desde el catálogo*\n*${n}*${b ? '\n' + b : ''}\n\n` + ls.map(x => `• ${x.c} × ${x.p.nombre} (${x.p.sku}) — ${fmt(x.c * precioPara(x.p, x.c))}`).join('\n') + `\n\n*Total aprox.: ${fmt(tot)}*${o ? '\nNota: ' + o : ''}`;
+  const txt = `🛒 *Pedido desde el catálogo*\n*${n}*${b ? '\n' + b : ''}\n\n` + ls.map(x => `• ${fmtCant(x.p, x.c)} × ${x.p.nombre} (${x.p.sku}) — ${fmt(x.c * precioPara(x.p, x.c))}`).join('\n') + `\n\n*Total aprox.: ${fmt(tot)}*${o ? '\nNota: ' + o : ''}`;
   const t = telWa();
   window.open('https://wa.me/' + (t || '') + '?text=' + encodeURIComponent(txt), '_blank');
   setTimeout(() => { if (confirm('¿Enviaste el pedido? Si es así, vaciamos la lista.')) { CART = {}; lsSet(LS_CART, CART); cerrar(); pintar(); } }, 1500);
