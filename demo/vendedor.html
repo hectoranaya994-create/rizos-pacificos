@@ -88,6 +88,8 @@ td.n,th.n{text-align:right}
 .pcard .acts{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
 .modal{position:fixed;inset:0;background:rgba(30,15,25,.5);display:flex;align-items:flex-start;justify-content:center;padding:24px 12px;z-index:50;overflow-y:auto}
 .modal.hidden{display:none}
+@keyframes sacudir{0%,100%{transform:translateX(0)}20%,60%{transform:translateX(-8px)}40%,80%{transform:translateX(8px)}}
+.mbox.sacude{animation:sacudir .35s}
 .mbox{background:#fff;border-radius:14px;width:100%;max-width:640px;box-shadow:0 20px 50px rgba(0,0,0,.25)}
 .mbox.wide{max-width:920px}
 .mhead{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--line);gap:10px}
@@ -182,7 +184,7 @@ header.top{flex-wrap:nowrap}
   <button data-v="mis" onclick="go('mis')"><span class="ic">🧾</span>Mis pedidos<span class="bdg" id="bdgMis"></span></button>
   <button data-v="auto" onclick="go('auto')"><span class="ic">📊</span>Autogestión</button>
 </nav>
-<div id="modal" class="modal hidden" onclick="if(event.target===this)closeModal()">
+<div id="modal" class="modal hidden" onclick="if(event.target===this)avisoModal()">
   <div class="mbox" id="mbox"><div class="mhead"><h3 id="mTitle"></h3><button onclick="closeModal()">×</button></div><div class="mbody" id="mBody"></div></div>
 </div>
 <div id="toast"></div>
@@ -438,6 +440,9 @@ function pedirRender() {
 document.addEventListener('focusout', () => setTimeout(() => { if (renderPend) pedirRender(); }, 60));
 function openModal(title, html, wide) { $('mTitle').textContent = title; $('mBody').innerHTML = html; $('mbox').classList.toggle('wide', !!wide); $('modal').classList.remove('hidden'); }
 function closeModal() { $('modal').classList.add('hidden'); if (renderPend) pedirRender(); }
+// Un clic por fuera de la ventana no la cierra (antes se perdía lo digitado). Se cierra solo con × o Cancelar.
+function avisoModal() { const b = $('mbox'); b.classList.remove('sacude'); void b.offsetWidth; b.classList.add('sacude'); toast('Para cerrar usa × o Cancelar'); }
+window.addEventListener('beforeunload', e => { if ($('modal') && !$('modal').classList.contains('hidden')) { e.preventDefault(); e.returnValue = ''; } });
 const modalAbierto = () => !$('modal').classList.contains('hidden');
 
 /* ---------- REGLAS DE NEGOCIO ---------- */
@@ -457,8 +462,36 @@ const brutoDe = o => sum(lineasDe(o), l => l.cant * l.precio);
 const calcTotal = (lineas, desc) => Math.round(sum(lineas, l => l.cant * l.precio) * (1 - (desc || 0) / 100));
 // Precios por volumen: productos/{pid}/escalas = [{desde, precio}]. Aplica por línea según la cantidad pedida.
 const escalasDe = p => (p && p.escalas ? vals(p.escalas) : []).filter(e => e && e.desde > 1 && e.precio > 0).sort((a, b) => a.desde - b.desde);
-function precioPara(p, cant) { let pr = p ? p.precio : 0; escalasDe(p).forEach(e => { if (cant >= e.desde) pr = e.precio; }); return pr; }
-const escalasTxt = p => escalasDe(p).map(e => `${e.desde}+ und ${fmt(e.precio)}`).join(' · ');
+/* PRESENTACIÓN DE VENTA (docena, caja, tira…)
+   Inventario, costo, precio y cantidades de los pedidos se guardan SIEMPRE por UNIDAD.
+   p.factor = unidades por presentación (1 = se vende por unidad), p.presNom = nombre (Docena, Caja…),
+   p.suelto = también se vende suelto, p.precioSuelto = precio de la unidad suelta.
+   La presentación solo cambia cómo se muestra y cómo se pide (el + suma una docena). */
+const factorDe = p => Math.max(1, parseInt(p && p.factor, 10) || 1);
+const ABREV_PRES = { Docena: 'doc', Caja: 'cj', Paquete: 'paq', Tira: 'tira', Display: 'disp', Bulto: 'bulto', Sixpack: 'six' };
+function presDe(p) {
+  const f = factorDe(p); if (f === 1) return { f, nom: 'Unidad', ab: 'und' };
+  const nom = (p.presNom || (f === 12 ? 'Docena' : 'Caja')).trim();
+  return { f, nom, ab: ABREV_PRES[nom] || nom.toLowerCase().slice(0, 4) };
+}
+const fmtCant = (p, n) => { const { f, ab } = presDe(p); n = +n || 0; if (f === 1) return n + ' und'; const q = Math.floor(n / f), r = n % f; return [q ? q + ' ' + ab : '', r ? r + ' und' : ''].filter(Boolean).join(' + ') || '0 ' + ab; };
+const precioPres = p => Math.round((p ? p.precio : 0) * factorDe(p));   // precio de la docena/caja
+// Precio por unidad para una cantidad: escalas por volumen y, si hay unidades sueltas, esas van a su precio aparte (promedio por unidad).
+function precioPara(p, cant) {
+  let pr = p ? p.precio : 0; escalasDe(p).forEach(e => { if (cant >= e.desde) pr = e.precio; });
+  const f = factorDe(p), r = f > 1 ? cant % f : 0;
+  if (r && p.suelto && +p.precioSuelto > 0) pr = Math.round(((cant - r) * pr + r * p.precioSuelto) / cant * 100) / 100;
+  return pr;
+}
+// Texto de cantidad × precio de una línea: "2 doc × $36.000" o "1 doc + 3 und · $3.100 c/u"
+function lineaTxt(p, l) {
+  const f = factorDe(p);
+  if (f > 1 && l.cant % f === 0) return `${fmtCant(p, l.cant)} × ${fmt(l.precio * f)}`;
+  return `${fmtCant(p, l.cant)} × ${fmt(l.precio)}${f > 1 ? ' c/u' : ''}`;
+}
+const precioDoc = (p, l) => factorDe(p) > 1 && l.cant % factorDe(p) === 0 ? `${fmt(l.precio * factorDe(p))}<span style="font-size:.8em;opacity:.7">/${presDe(p).ab}</span>` : fmt(l.precio);
+const escalasTxt = p => { const { f, ab } = presDe(p); return escalasDe(p).map(e => f > 1 && e.desde % f === 0 ? `${e.desde / f}+ ${ab} ${fmt(e.precio * f)}` : `${e.desde}+ und ${fmt(e.precio)}`).join(' · '); };
+
 const sigEscala = (p, cant) => escalasDe(p).find(e => e.desde > cant);
 function saldoPedido(o) { if (o.pago !== 'credito' || !VALIDOS.includes(o.estado)) return 0; return Math.max(0, o.total - pagado(o)); }
 const pedidosCliente = cid => pedidos().filter(o => o.clienteId === cid && VALIDOS.includes(o.estado));
@@ -485,7 +518,7 @@ function barsH(items, max) {
 function textoPedido(o) {
   const c = C(o.clienteId);
   let t = `*${EMPRESA}*\nPedido ${numPedido(o)} · ${fFecha(o.fecha)}${o.factura ? '\nFactura ' + o.factura.num : ''}\nCliente: ${c.nombre}\n\n`;
-  lineasDe(o).forEach(l => t += `• ${l.cant} x ${P(l.pid).nombre} = ${fmt(l.cant * l.precio)}\n`);
+  lineasDe(o).forEach(l => t += `• ${fmtCant(P(l.pid), l.cant)} x ${P(l.pid).nombre} = ${fmt(l.cant * l.precio)}\n`);
   if (o.desc) t += `\nDescuento ${o.desc}%`;
   t += `\n*Total: ${fmt(o.total)}*\nPago: ${o.pago === 'credito' ? 'Crédito' + (o.vence ? ', vence ' + fFecha(o.vence) : '') : 'Contado'}\n¡Gracias por su compra!`;
   return t;
@@ -729,7 +762,11 @@ function datosVacios() {
 <script>
 /* =================== APP DEL VENDEDOR =================== */
 const LS_SES = PFX + 'sesion_vendedor';
-let VID = lsGet(LS_SES, null), VIEW = 'inicio', PREV = null;
+// La sesión vive solo mientras la app/pestaña está abierta: al cerrarla y volver a abrir pide clave otra vez.
+const sesGet = () => { try { return JSON.parse(sessionStorage.getItem(LS_SES)); } catch (e) { return null; } };
+const sesSet = v => { try { v == null ? sessionStorage.removeItem(LS_SES) : sessionStorage.setItem(LS_SES, JSON.stringify(v)); } catch (e) {} };
+lsSet(LS_SES, null);   // borra la sesión permanente que guardaban las versiones anteriores
+let VID = sesGet(), VIEW = 'inicio', PREV = null;
 const LS_BORR = () => PFX + 'borrador_' + VID;
 let CART = null;
 const yo = () => V(VID);
@@ -738,11 +775,17 @@ const misPedidos = () => pedidos().filter(o => o.vendedorId === VID);
 const enCola = id => cola().some(u => Object.keys(u).some(k => k.startsWith('pedidos/' + id)));
 
 RENDER = render;
-iniciarDatos(origen => {
+// Arranca cuando TODO el script ya cargó: si había sesión guardada, render() usa constantes declaradas más abajo
+// (antes fallaba al reabrir la app con sesión abierta: quedaba "Sin conexión" y no dejaba entrar).
+// Guarda la app en el celular para poder abrirla sin internet (sw.js está en la raíz del repositorio)
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+  try { navigator.serviceWorker.register(DEMO ? '../sw.js' : 'sw.js').catch(e => console.warn('SW', e)); } catch (e) {}
+}
+setTimeout(() => iniciarDatos(origen => {
   if (VID && DB.vendedores && !DB.vendedores[VID]) salir(true);
   vigilarCambios();
   if (origen === 'remoto') pedirRender(); else RENDER();
-});
+}), 0);
 
 function vigilarCambios() {
   if (!VID || !DB.pedidos) return;
@@ -788,11 +831,11 @@ function entrar() {
   const u = $('lgU').value.trim().toLowerCase(), c = $('lgC').value;
   const v = vendedores().find(x => x.usuario.toLowerCase() === u && x.clave === c && x.activo !== false);
   if (!v) return toast('Usuario o clave incorrectos');
-  VID = v.id; lsSet(LS_SES, VID); PREV = null; vigilarCambios(); VIEW = 'inicio'; render();
+  VID = v.id; sesSet(VID); PREV = null; vigilarCambios(); VIEW = 'inicio'; render();
 }
 function salir(silencio) {
   if (!silencio && !confirm('¿Cerrar sesión en este equipo?')) return;
-  VID = null; lsSet(LS_SES, null); CART = null; render();
+  VID = null; sesSet(null); CART = null; render();
 }
 
 /* ---------- INICIO ---------- */
@@ -974,8 +1017,8 @@ function ficha(cid, tab) {
       ${saldo ? `<button class="btn acc grow" onclick="formRecaudo('${cid}')">💵 Recaudo</button>` : ''}
     </div>
     <div class="row" style="gap:8px;margin-top:8px">
-      <a class="btn wa grow" target="_blank" href="${waLink(c.tel, `Hola ${c.contacto.split(' ')[0]}, le saluda ${yo().nombre} de ${EMPRESA}. ¿Le tomo el pedido de esta semana?`)}">WhatsApp</a>
-      <a class="btn sec grow" href="tel:${esc(c.tel)}">📞 Llamar</a>
+      ${c.tel ? `<a class="btn wa grow" target="_blank" href="${waLink(c.tel, `Hola ${(c.contacto || c.nombre).split(' ')[0]}, le saluda ${yo().nombre} de ${EMPRESA}. ¿Le tomo el pedido de esta semana?`)}">WhatsApp</a>
+      <a class="btn sec grow" href="tel:${esc(c.tel)}">📞 Llamar</a>` : '<span class="small mut grow" style="align-self:center">Sin celular registrado (pídelo y avísale a administración)</span>'}
     </div>
     ${nunca.length ? `<div class="alert info">💡 Ofrécele: ${nunca.map(p => '<b>' + esc(p.nombre) + '</b>').join(', ')}</div>` : ''}
     <div class="tabs2">
@@ -1002,16 +1045,18 @@ function formCliente(pr) {
       <label>Barrio / dirección<input id="fcBar"></label>
     </div>
     <div class="f small" style="margin-top:10px;font-weight:600;color:var(--mut)">Días de visita</div>
-    <div class="row" style="gap:12px;margin-top:4px">${[1, 2, 3, 4, 5, 6].map(d => `<label class="small" style="display:flex;gap:4px;align-items:center"><input type="checkbox" class="fcDia" value="${d}" style="width:auto" ${d === diaSemana(TODAY()) ? 'checked' : ''}>${DIAS[d]}</label>`).join('')}</div>
+    <div class="row" style="gap:12px;margin-top:4px">${[1, 2, 3, 4, 5, 6].map(d => `<label class="small" style="display:flex;gap:4px;align-items:center"><input type="checkbox" class="fcDia" value="${d}" style="width:auto" ${d === (diaSemana(TODAY()) || 1) ? 'checked' : ''}>${DIAS[d]}</label>`).join('')}</div>
     <div class="alert info">El cliente queda de <b>contado</b>. El crédito y el cupo los asigna administración.</div>
+    <div class="alert bad" id="fcErr" style="display:none"></div>
     <div class="mfoot"><button class="btn sec" onclick="closeModal()">Cancelar</button><button class="btn" onclick="guardarCliente('${pr ? pr.id : ''}')">Guardar</button></div>`);
 }
+function fcError(m) { const e = $('fcErr'); if (e) { e.textContent = m; e.style.display = ''; e.scrollIntoView({ block: 'center', behavior: 'smooth' }); } toast(m); }
 function guardarCliente(prId) {
   const d = { nombre: $('fcNom').value.trim(), tipo: $('fcTipo').value, contacto: $('fcCon').value.trim(), tel: $('fcTel').value.replace(/\D/g, ''), municipio: $('fcMun').value, barrio: $('fcBar').value.trim() || 'Centro' };
-  if (!d.nombre) return toast('Escribe el nombre del negocio');
-  if (d.tel.length !== 10) return toast('El celular debe tener 10 dígitos');
+  if (!d.nombre) return fcError('Escribe el nombre del negocio');
+  if (d.tel.length !== 10) return fcError('El celular debe tener 10 dígitos');
   d.dias = [...document.querySelectorAll('.fcDia:checked')].map(x => +x.value);
-  if (!d.dias.length) return toast('Marca al menos un día de visita');
+  if (!d.dias.length) return fcError('Marca al menos un día de visita');
   const id = uid('C'), upd = { ['clientes/' + id]: { id, ...d, vendedorId: VID, plazo: 0, cupo: 0, creado: TODAY(), creadoPor: VID } };
   if (prId) upd['prospectos/' + prId] = null;
   guardar(upd); render(); ficha(id); toast('Cliente creado');
@@ -1051,7 +1096,7 @@ function guardarRecaudo(cid) {
   guardar({ [`pedidos/${o.id}/abonos/${id}`]: { id, fecha: TODAY(), ts: Date.now(), valor: v, medio, confirmado: false, reportadoPor: VID } });
   render(); ficha(cid, 'fac'); toast('Recaudo reportado a administración');
   const c = C(cid);
-  setTimeout(() => { if (confirm('¿Enviar comprobante al cliente por WhatsApp?')) window.open(waLink(c.tel, `${EMPRESA}\nRecibimos ${fmt(v)} en ${medio} como abono a la factura ${o.factura.num}.\nSaldo pendiente: ${fmt(Math.max(0, saldoQueda))}.\nRecibió: ${yo().nombre}. ¡Gracias!`), '_blank'); }, 300);
+  if (c.tel) setTimeout(() => { if (confirm('¿Enviar comprobante al cliente por WhatsApp?')) window.open(waLink(c.tel, `${EMPRESA}\nRecibimos ${fmt(v)} en ${medio} como abono a la factura ${o.factura.num}.\nSaldo pendiente: ${fmt(Math.max(0, saldoQueda))}.\nRecibió: ${yo().nombre}. ¡Gracias!`), '_blank'); }, 300);
 }
 
 /* ---------- TOMAR PEDIDO ---------- */
@@ -1103,24 +1148,26 @@ function listaProd() {
   $('lstProd').innerHTML = rows.map(p => filaProd(p)).join('') || '<p class="mut">Sin productos.</p>';
 }
 function filaProd(p) {
-  const n = CART.items[p.id] || 0;
-  return `<div class="prod ${n ? 'sel' : ''}" id="pr_${p.id}"><div onclick="verProducto('${p.id}')" style="cursor:pointer">${htmlFoto(p)}</div><div class="x"><b>${esc(p.nombre)}</b><span class="small mut">${esc(p.sku)} · <b style="color:${precioPara(p, n) < p.precio ? 'var(--ok)' : 'var(--txt)'};display:inline">${fmt(precioPara(p, n))}</b> · ${p.stock > 0 ? `<span style="color:${n > p.stock ? 'var(--bad)' : 'var(--mut)'}">disp. ${p.stock}</span>` : '<span style="color:var(--bad)">agotado</span>'}</span>${escalasDe(p).length ? `<span class="small" style="display:block;color:var(--ok)">${(s => s ? `Faltan ${s.desde - n} para ${fmt(s.precio)}` : 'Mejor precio aplicado')(sigEscala(p, n))} · ${escalasTxt(p)}</span>` : ''}</div>
-  <div class="qty"><button onclick="setCant('${p.id}',${n - 1})">−</button><input type="number" inputmode="numeric" min="0" value="${n || ''}" placeholder="0" onchange="setCant('${p.id}',this.value)"><button onclick="setCant('${p.id}',${n + 1})">+</button></div></div>`;
+  const n = CART.items[p.id] || 0, f = factorDe(p), pr = presDe(p), r = n % f;
+  return `<div class="prod ${n ? 'sel' : ''}" id="pr_${p.id}"><div onclick="verProducto('${p.id}')" style="cursor:pointer">${htmlFoto(p)}</div><div class="x"><b>${esc(p.nombre)}</b><span class="small mut">${esc(p.sku)} · <b style="color:${precioPara(p, n) < p.precio ? 'var(--ok)' : 'var(--txt)'};display:inline">${f > 1 ? fmt(Math.round(precioPara(p, Math.max(f, n - r)) * f)) + '/' + pr.ab : fmt(precioPara(p, n))}</b> · ${p.stock > 0 ? `<span style="color:${n > p.stock ? 'var(--bad)' : 'var(--mut)'}">disp. ${fmtCant(p, p.stock)}</span>` : '<span style="color:var(--bad)">agotado</span>'}</span>${escalasDe(p).length ? `<span class="small" style="display:block;color:var(--ok)">${(s => s ? `Faltan ${fmtCant(p, s.desde - n)} para ${f > 1 ? fmt(s.precio * f) + '/' + pr.ab : fmt(s.precio)}` : 'Mejor precio aplicado')(sigEscala(p, n))} · ${escalasTxt(p)}</span>` : ''}${f > 1 ? `<span class="small" style="display:block;color:var(--pri);font-weight:600">Por ${pr.nom.toLowerCase()} x ${f}${p.suelto ? ' · también suelto' : ''}${n ? ' · lleva ' + fmtCant(p, n) : ''}</span>` : ''}</div>
+  <div class="qty"><button onclick="setCant('${p.id}',${Math.max(0, n - f)})">−</button><input type="number" inputmode="numeric" min="0" value="${Math.floor(n / f) || ''}" placeholder="0" onchange="setCant('${p.id}',(parseInt(this.value,10)||0)*${f}+${r})"><button onclick="setCant('${p.id}',${n + f})">+</button></div></div>`;
 }
 function verProducto(pid) {
-  const p = P(pid), n = CART && CART.items[pid] || 0;
+  const p = P(pid), n = CART && CART.items[pid] || 0, f = factorDe(p), pr = presDe(p), r = n % f;
   openModal(p.nombre, `
     ${htmlFoto(p, 'big')}
-    <div class="row between"><div><div class="small mut">${esc(p.sku)} · ${esc(p.cat)}</div><b style="font-size:20px">${fmt(p.precio)}</b>${escalasDe(p).length ? `<div class="small" style="color:var(--ok)">Por cantidad: ${escalasTxt(p)}</div>` : ''}</div><span class="b ${p.stock === 0 ? 'bad' : p.stock <= p.min ? 'warn' : 'ok'}">${p.stock ? p.stock + ' disponibles' : 'Agotado'}</span></div>
+    <div class="row between"><div><div class="small mut">${esc(p.sku)} · ${esc(p.cat)}</div><b style="font-size:20px">${f > 1 ? `${fmt(precioPres(p))} <span style="font-size:13px;font-weight:600">/ ${pr.nom.toLowerCase()} x ${f}</span>` : fmt(p.precio)}</b>${f > 1 ? `<div class="small mut">${fmt(p.precio)} c/u${p.suelto && +p.precioSuelto > 0 ? ' · suelta ' + fmt(p.precioSuelto) : ''}</div>` : ''}${escalasDe(p).length ? `<div class="small" style="color:var(--ok)">Por cantidad: ${escalasTxt(p)}</div>` : ''}</div><span class="b ${p.stock === 0 ? 'bad' : p.stock <= p.min ? 'warn' : 'ok'}">${p.stock ? fmtCant(p, p.stock) + ' disp.' : 'Agotado'}</span></div>
     ${p.foto ? `<div class="small mut" style="margin-top:6px">Foto de ${new Date(p.foto).toLocaleDateString('es-CO')}${p.fotoPor ? ' · ' + esc(p.fotoPor) : ''}</div>` : '<div class="alert info">Este producto aún no tiene foto. Tómala para que todo el equipo la vea en el catálogo.</div>'}
-    <div class="row" style="margin-top:12px;gap:8px">
-      <label class="btn acc btnfile grow">📷 ${p.foto ? 'Cambiar foto' : 'Tomar foto'}<input type="file" accept="image/*" capture="environment" onchange="fotoElegida('${pid}',this)"></label>
+    ${p.foto ? '' : `<div class="row" style="margin-top:12px;gap:8px">
+      <label class="btn acc btnfile grow">📷 Tomar foto<input type="file" accept="image/*" capture="environment" onchange="fotoElegida('${pid}',this)"></label>
       <label class="btn sec btnfile grow">🖼 Galería<input type="file" accept="image/*" onchange="fotoElegida('${pid}',this)"></label>
-    </div>
-    ${CART && CART.clienteId ? `<div class="mfoot"><button class="btn" onclick="setCant('${pid}',${n + 1});closeModal()">＋ Agregar al pedido${n ? ' (lleva ' + n + ')' : ''}</button></div>` : ''}`);
+    </div>`}
+    ${CART && CART.clienteId && f > 1 && p.suelto ? `<div class="row between" style="margin-top:12px;align-items:center"><span class="small"><b>Unidades sueltas</b>${+p.precioSuelto > 0 ? ' · ' + fmt(p.precioSuelto) + ' c/u' : ''}</span><div class="qty" style="width:140px"><button onclick="setCant('${pid}',${Math.max(0, n - (r ? 1 : 0))});verProducto('${pid}')">−</button><input value="${r}" disabled style="text-align:center"><button onclick="setCant('${pid}',${r < f - 1 ? n + 1 : n});verProducto('${pid}')">+</button></div></div>` : ''}
+    ${CART && CART.clienteId ? `<div class="mfoot"><button class="btn" onclick="setCant('${pid}',${n + f});closeModal()">＋ Agregar ${f > 1 ? '1 ' + pr.nom.toLowerCase() : 'al pedido'}${n ? ' (lleva ' + fmtCant(p, n) + ')' : ''}</button></div>` : ''}`);
 }
 async function fotoElegida(pid, input) {
   const file = input.files && input.files[0]; if (!file) return;
+  if (P(pid) && P(pid).foto) return toast('La foto solo se cambia desde administración');   // el vendedor no reemplaza fotos
   toast('Subiendo foto…');
   try { await subirFoto(pid, file, yo().nombre); toast('✅ Foto guardada'); verProducto(pid); }
   catch (e) { toast(e.message); }
@@ -1131,7 +1178,7 @@ function setCant(pid, n) {
   guardarBorrador();
   const el = $('pr_' + pid);
   if (el && el.parentNode) { const t = document.createElement('div'); t.innerHTML = filaProd(P(pid)); try { el.replaceWith(t.firstElementChild); } catch (e) {} }
-  if (n > P(pid).stock) toast(`Solo hay ${P(pid).stock} disponibles. Facturación ajustará.`);
+  if (n > P(pid).stock) toast(`Solo hay ${fmtCant(P(pid), P(pid).stock)} disponibles. Facturación ajustará.`);
   barraCarrito();
 }
 function lineasCart() { return Object.entries(CART.items).filter(([pid]) => P(pid)).map(([pid, cant]) => ({ pid, cant, precio: precioPara(P(pid), cant) })); }
@@ -1139,7 +1186,7 @@ function barraCarrito() {
   const ls = lineasCart(), b = $('cartbar');
   if (!ls.length || VIEW !== 'pedido') { b.style.display = 'none'; return; }
   b.style.display = '';
-  b.innerHTML = `<div><div style="flex:1"><div class="small" style="opacity:.8">${ls.length} productos · ${sum(ls, l => l.cant)} und</div><b>${fmt(calcTotal(ls, CART.desc))}</b></div><button class="btn acc" onclick="revisar()">Revisar pedido ›</button></div>`;
+  b.innerHTML = `<div><div style="flex:1"><div class="small" style="opacity:.8">${ls.length} producto${ls.length > 1 ? 's' : ''}</div><b>${fmt(calcTotal(ls, CART.desc))}</b></div><button class="btn acc" onclick="revisar()">Revisar pedido ›</button></div>`;
 }
 function revisar() {
   const c = C(CART.clienteId), ls = lineasCart(), bruto = sum(ls, l => l.cant * l.precio), total = calcTotal(ls, CART.desc);
@@ -1147,7 +1194,7 @@ function revisar() {
   const s = saldoCliente(c.id), venc = vencidasCliente(c.id), faltan = ls.filter(l => l.cant > P(l.pid).stock);
   openModal('Revisar pedido', `
     <b>${esc(c.nombre)}</b><div class="small mut" style="margin-bottom:10px">${esc(c.barrio)}, ${esc(c.municipio)}</div>
-    <div class="list">${ls.map(l => { const p = P(l.pid); return `<div class="it"><div class="x"><b style="white-space:normal">${esc(p.nombre)}</b><span class="small mut">${l.cant} × ${fmt(l.precio)}${l.precio < p.precio ? ' <span style="color:var(--ok)">(precio x volumen)</span>' : ''}${l.cant > p.stock ? ' · <span style="color:var(--bad)">disp. ' + p.stock + '</span>' : ''}</span></div><b>${fmt(l.cant * l.precio)}</b><button class="btn sm sec" onclick="setCant('${l.pid}',0);${ls.length > 1 ? 'revisar()' : 'closeModal()'}">✕</button></div>`; }).join('')}</div>
+    <div class="list">${ls.map(l => { const p = P(l.pid); return `<div class="it"><div class="x"><b style="white-space:normal">${esc(p.nombre)}</b><span class="small mut">${lineaTxt(p, l)}${l.precio < p.precio ? ' <span style="color:var(--ok)">(precio x volumen)</span>' : ''}${l.cant > p.stock ? ' · <span style="color:var(--bad)">disp. ' + fmtCant(p, p.stock) + '</span>' : ''}</span></div><b>${fmt(l.cant * l.precio)}</b><button class="btn sm sec" onclick="setCant('${l.pid}',0);${ls.length > 1 ? 'revisar()' : 'closeModal()'}">✕</button></div>`; }).join('')}</div>
     <div class="fg" style="margin-top:12px">
       <label>Descuento<select onchange="CART.desc=+this.value;guardarBorrador();revisar()">${desc.map(d => `<option value="${d}" ${CART.desc === d ? 'selected' : ''}>${d}%</option>`).join('')}</select></label>
       <label>Forma de pago<select onchange="CART.pago=this.value;guardarBorrador();revisar()"><option value="contado" ${CART.pago === 'contado' ? 'selected' : ''}>Contado</option>${c.plazo ? `<option value="credito" ${CART.pago === 'credito' ? 'selected' : ''}>Crédito ${c.plazo} días</option>` : ''}</select></label>
@@ -1206,7 +1253,7 @@ function verPedido(id) {
     ${o.estado === 'rechazado' ? `<div class="alert bad">Rechazado: ${esc(o.motivo || '—')}</div>` : ''}
     ${o.ajustado ? `<div class="alert warn">Facturación ajustó cantidades: ${esc(o.ajustado)}</div>` : ''}
     ${enCola(o.id) ? '<div class="alert warn">⏳ Aún no ha llegado a facturación (sin señal).</div>' : ''}
-    <div class="list" style="margin-top:8px">${lineasDe(o).map(l => `<div class="it"><div class="x"><b style="white-space:normal">${esc(P(l.pid).nombre)}</b><span class="small mut">${l.cant} × ${fmt(l.precio)}</span></div><b>${fmt(l.cant * l.precio)}</b></div>`).join('')}</div>
+    <div class="list" style="margin-top:8px">${lineasDe(o).map(l => `<div class="it"><div class="x"><b style="white-space:normal">${esc(P(l.pid).nombre)}</b><span class="small mut">${lineaTxt(P(l.pid), l)}</span></div><b>${fmt(l.cant * l.precio)}</b></div>`).join('')}</div>
     <div class="tot"><span>Subtotal</span><span>${fmt(bruto)}</span></div>
     ${o.desc ? `<div class="tot"><span>Descuento ${o.desc}%</span><span>−${fmt(bruto - o.total)}</span></div>` : ''}
     <div class="tot big"><span>Total</span><span>${fmt(o.total)}</span></div>
@@ -1214,7 +1261,7 @@ function verPedido(id) {
     <div class="mfoot">
       ${o.estado === 'por_aprobar' ? `<button class="btn bad" onclick="cancelar('${o.id}')">Cancelar pedido</button>` : ''}
       ${o.estado === 'rechazado' && !o.reenviadoEn ? `<button class="btn acc" onclick="corregir('${o.id}')">Corregir y reenviar</button>` : ''}
-      <a class="btn wa" target="_blank" href="${waLink(c.tel, textoPedido(o))}">Enviar al cliente</a>
+      ${c.tel ? `<a class="btn wa" target="_blank" href="${waLink(c.tel, textoPedido(o))}">Enviar al cliente</a>` : ''}
     </div>`);
 }
 function cancelar(id) {
