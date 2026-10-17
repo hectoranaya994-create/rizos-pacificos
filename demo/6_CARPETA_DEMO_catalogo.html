@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#5b2350">
+<title>Catálogo · Rizos Pacíficos</title>
+<meta name="description" content="Catálogo y precios actualizados. Haz tu pedido por WhatsApp.">
+<style>
+:root{--pri:#5b2350;--pri2:#7a3a6c;--acc:#d9892b;--bg:#f5f2ef;--card:#fff;--txt:#2a2127;--mut:#7b7078;--line:#e7e0e4;--ok:#1f8a4c;--okbg:#e5f4ea;--bad:#c0392b;--badbg:#fbe5e2}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--txt);font-size:14px;padding-bottom:90px}
+button{font:inherit;cursor:pointer}
+input,textarea{font:inherit;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--txt);width:100%}
+.top{background:var(--pri);color:#fff;padding:14px 16px;display:flex;align-items:center;gap:12px;position:sticky;top:0;z-index:5}
+.logo{width:44px;height:44px;border-radius:12px;background:var(--acc);display:grid;place-items:center;font-weight:800;font-size:18px;flex:0 0 auto;color:#fff;background-size:cover;background-position:center}
+.top h1{margin:0;font-size:17px;line-height:1.2}
+.top small{opacity:.85;font-size:12px}
+.top .grow{flex:1;min-width:0}
+.btn{border:0;border-radius:10px;padding:10px 14px;font-weight:700;background:var(--pri);color:#fff}
+.btn.acc{background:var(--acc)}.btn.ok{background:#1f9d55}.btn.sec{background:#efe8ec;color:var(--pri)}
+.btn.sm{padding:7px 11px;font-size:13px}
+.top .btn{background:rgba(255,255,255,.16);font-size:13px;padding:8px 11px}
+.wrap{max-width:1100px;margin:0 auto;padding:14px 16px}
+.info{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:12px}
+.info .nota{background:#fdf1dc;color:#7a4a00;border-radius:10px;padding:10px 12px;font-weight:600;margin-bottom:10px}
+.conds{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px 16px}
+.conds div{font-size:13px}.conds b{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--mut)}
+.mut{color:var(--mut)}.small{font-size:12px}
+.buscar{position:sticky;top:72px;z-index:4;background:var(--bg);padding:6px 0 8px}
+.chips{display:flex;gap:6px;overflow-x:auto;padding:8px 0 2px;scrollbar-width:none}
+.chips::-webkit-scrollbar{display:none}
+.chip{border:1px solid var(--line);background:#fff;border-radius:20px;padding:6px 12px;white-space:nowrap;font-weight:600;color:var(--mut);font-size:13px}
+.chip.on{background:var(--pri);border-color:var(--pri);color:#fff}
+h2.cat{font-size:16px;margin:18px 0 8px;color:var(--pri)}
+.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+@media(min-width:640px){.grid{grid-template-columns:repeat(3,1fr)}}
+@media(min-width:960px){.grid{grid-template-columns:repeat(4,1fr)}}
+.prod{background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden;display:flex;flex-direction:column}
+.prod.sel{border-color:var(--acc);box-shadow:0 0 0 2px var(--acc) inset}
+.ph{aspect-ratio:1;background:#f3eef1 center/contain no-repeat;display:grid;place-items:center;font-size:40px;position:relative}
+.ph.con{background-color:#fff;font-size:0}
+.ago{position:absolute;top:8px;left:8px;background:var(--bad);color:#fff;font-size:11px;font-weight:800;padding:3px 8px;border-radius:12px}
+.pb{padding:10px;display:flex;flex-direction:column;gap:3px;flex:1}
+.pb .nom{font-weight:700;font-size:13px;line-height:1.25}
+.pb .cod{font-size:11px;color:var(--mut)}
+.pb .pre{font-size:18px;font-weight:800;color:var(--pri);margin-top:auto}
+.pb .esc{font-size:11.5px;color:var(--ok);font-weight:600}
+.qty{display:flex;align-items:center;margin-top:6px;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.qty button{border:0;background:#f4eef2;width:38px;height:36px;font-size:18px;font-weight:700;color:var(--pri)}
+.qty input{border:0;border-radius:0;text-align:center;padding:6px 0;width:100%;min-width:0;font-weight:700}
+.cart{position:fixed;left:0;right:0;bottom:0;padding:10px 16px calc(10px + env(safe-area-inset-bottom));background:var(--pri);color:#fff;display:none;z-index:6}
+.cart>div{max-width:1100px;margin:0 auto;display:flex;align-items:center;gap:12px}
+.cart .grow{flex:1}
+.modal{position:fixed;inset:0;background:rgba(30,15,25,.45);display:none;align-items:flex-end;justify-content:center;z-index:10}
+.modal.on{display:flex}
+.mbox{background:#fff;width:100%;max-width:520px;border-radius:18px 18px 0 0;padding:18px 16px calc(16px + env(safe-area-inset-bottom));max-height:90vh;overflow:auto}
+@media(min-width:640px){.modal{align-items:center}.mbox{border-radius:18px}}
+.mbox h3{margin:0 0 10px}
+.lin{display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--line);font-size:13px}
+.tot{display:flex;justify-content:space-between;font-weight:800;font-size:16px;margin:10px 0}
+label.f{display:block;font-size:12px;font-weight:600;color:var(--mut);margin-top:10px}
+label.f input,label.f textarea{margin-top:4px}
+.row{display:flex;gap:8px;margin-top:14px}.row .btn{flex:1}
+.vacio{text-align:center;color:var(--mut);padding:40px 10px}
+#toast{position:fixed;left:50%;bottom:100px;transform:translateX(-50%);background:#2a2127;color:#fff;padding:10px 16px;border-radius:12px;font-size:13px;opacity:0;transition:.25s;pointer-events:none;z-index:20;max-width:90vw;text-align:center}
+#toast.show{opacity:1}
+.solo-pdf{display:none}
+@media print{
+  @page{size:A4;margin:10mm}
+  body{background:#fff;padding:0;font-size:11px}
+  .top{position:static;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .top .btn,.buscar,.qty,.cart,#toast,.no-pdf{display:none!important}
+  .solo-pdf{display:block}
+  .wrap{padding:6px 0;max-width:none}
+  .info{border:1px solid #ccc;break-inside:avoid}
+  .grid{grid-template-columns:repeat(4,1fr)!important;gap:6px}
+  .prod{break-inside:avoid;border:1px solid #ccc}
+  .prod.sel{box-shadow:none;border-color:#ccc}
+  .ph{aspect-ratio:1.15}
+  .pb{padding:6px}.pb .pre{font-size:14px}
+  h2.cat{break-after:avoid;margin:10px 0 6px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .ago,.logo{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="logo" id="logo">RP</div>
+  <div class="grow"><h1 id="emp">Rizos Pacíficos</h1><small id="lema">Catálogo de productos</small></div>
+  <button class="btn" onclick="pdf()">📄 PDF</button>
+  <button class="btn" onclick="compartir()">↗</button>
+</header>
+<main class="wrap">
+  <section class="info" id="info"><div class="mut">Cargando catálogo…</div></section>
+  <div class="buscar no-pdf">
+    <input id="q" type="search" placeholder="Buscar producto…" oninput="F.q=this.value;pintar()">
+    <div class="chips" id="chips"></div>
+  </div>
+  <div id="lista"></div>
+</main>
+<div class="cart" id="cart"></div>
+<div class="modal" id="modal" onclick="if(event.target===this)cerrar()"><div class="mbox" id="mbox"></div></div>
+<div id="toast"></div>
+<script>
+/* =====================================================================
+   catalogo.html — catálogo para clientes (solo lectura, en vivo)
+   Lee de Firebase: productos, fotos y config/empresa + config/catalogo.
+   Muestra precio de venta y precios por cantidad. NUNCA muestra costos ni cantidades en bodega.
+   Los clientes arman el pedido y lo envían por WhatsApp. Botón PDF = imprimir / guardar como PDF.
+   ===================================================================== */
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyBz0NhQzMzup8oFdQZr9sWYZIJIp1s8ZjY",
+  authDomain: "distri-elena.firebaseapp.com",
+  databaseURL: "https://distri-elena-default-rtdb.firebaseio.com",
+  projectId: "distri-elena",
+  storageBucket: "distri-elena.firebasestorage.app",
+  messagingSenderId: "266793024970",
+  appId: "1:266793024970:web:09bbc82d5ba6cf10156333"
+};
+const DEMO = true;
+const RAIZ = DEMO ? 'distcap' : 'rizos';
+const PFX = DEMO ? 'rp_demo_' : 'rp_';
+const FB_VER = '10.12.2';
+const ICONO_CAT = { 'Cremas para peinar': '🧴', 'Shampoo y acondicionador': '🫧', 'Tratamientos': '💆', 'Geles y activadores': '🫙', 'Aceites y mantecas': '🥥', 'Coloración': '🎨', 'Accesorios': '🪮' };
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const fmt = n => '$' + Math.round(n || 0).toLocaleString('es-CO');
+const vals = o => o ? Object.values(o) : [];
+const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
+function toast(t) { const e = $('toast'); e.textContent = t; e.classList.add('show'); clearTimeout(e._t); e._t = setTimeout(() => e.classList.remove('show'), 2800); }
+const inicialesDe = n => String(n || '').split(/\s+/).filter(w => w.length > 2).map(w => w[0]).join('').slice(0, 2).toUpperCase() || 'RP';
+if (DEMO) document.title = '[DEMO] ' + document.title;
+
+/* ---------- DATOS ---------- */
+// Solo se guardan los campos públicos de cada producto (sin costo, sin stock exacto).
+const LS_CAT = PFX + 'catalogo_cache', LS_CART = PFX + 'catalogo_pedido';
+let D = lsGet(LS_CAT, { prods: [], empresa: {}, cat: {}, ts: 0 });
+let CART = lsGet(LS_CART, {});
+const F = { q: '', cat: '' };
+let fbRoot = null;
+function publico(p) {
+  const esc_ = vals(p.escalas).filter(e => e && e.desde > 1 && e.precio > 0).sort((a, b) => a.desde - b.desde).map(e => ({ desde: e.desde, precio: e.precio }));
+  const f = Math.max(1, parseInt(p.factor, 10) || 1);
+  return { id: p.id, sku: p.sku || '', nombre: p.nombre || '', cat: p.cat || 'Otros', precio: +p.precio || 0, escalas: esc_, hay: (+p.stock || 0) >= (p.suelto && +p.precioSuelto > 0 ? 1 : f), foto: p.foto || null,
+    factor: f, presNom: f > 1 ? (p.presNom || (f === 12 ? 'Docena' : 'Caja')) : null, suelto: f > 1 && !!p.suelto && +p.precioSuelto > 0, precioSuelto: +p.precioSuelto || 0 };
+}
+function recibir(parte, v) {
+  if (parte === 'productos') D.prods = vals(v).filter(p => p && p.id && p.nombre && +p.precio > 0).map(publico);
+  else if (parte === 'empresa') D.empresa = v || {};
+  else if (parte === 'catalogo') D.cat = v || {};
+  D.ts = Date.now(); lsSet(LS_CAT, D); pintarTodo();
+}
+function cargarScript(src) { return new Promise((ok, no) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = no; document.head.appendChild(s); }); }
+async function conectar() {
+  if (!FIREBASE_CONFIG) {   // modo local (pruebas): usa los datos del demo guardados en este navegador
+    const db = lsGet(PFX + 'db', {}); recibir('productos', db.productos); recibir('empresa', (db.config || {}).empresa); recibir('catalogo', (db.config || {}).catalogo); return;
+  }
+  try {
+    await cargarScript(`https://www.gstatic.com/firebasejs/${FB_VER}/firebase-app-compat.js`);
+    await cargarScript(`https://www.gstatic.com/firebasejs/${FB_VER}/firebase-database-compat.js`);
+    if (!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
+    fbRoot = firebase.database().ref(RAIZ);
+    fbRoot.child('productos').on('value', s => recibir('productos', s.val()));
+    fbRoot.child('config/empresa').on('value', s => recibir('empresa', s.val()));
+    fbRoot.child('config/catalogo').on('value', s => recibir('catalogo', s.val()));
+  } catch (e) { if (!D.prods.length) $('info').innerHTML = '<div class="mut">Sin conexión. Abre el catálogo con internet al menos una vez.</div>'; else toast('Sin conexión: mostrando los últimos precios guardados'); }
+}
+
+/* ---------- FOTOS (se bajan una por una y quedan guardadas en el celular) ---------- */
+const FOTOS = {};
+const idb = (() => {
+  let p = null;
+  const abrir = () => p || (p = new Promise((ok, no) => { const r = indexedDB.open(PFX + 'fotos', 1); r.onupgradeneeded = () => r.result.createObjectStore('f'); r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error); }));
+  return {
+    get: k => abrir().then(d => new Promise(ok => { const t = d.transaction('f').objectStore('f').get(k); t.onsuccess = () => ok(t.result || null); t.onerror = () => ok(null); })).catch(() => null),
+    set: (k, v) => abrir().then(d => new Promise(ok => { const t = d.transaction('f', 'readwrite'); t.objectStore('f').put(v, k); t.oncomplete = () => ok(true); t.onerror = () => ok(false); })).catch(() => false)
+  };
+})();
+async function fotoSrc(p) {
+  if (!p || !p.foto) return null;
+  const k = p.id + '@' + p.foto;
+  if (FOTOS[k]) return FOTOS[k];
+  let d = await idb.get(k);
+  if (!d && fbRoot) { try { d = (await fbRoot.child('fotos/' + p.id).once('value')).val(); if (d) idb.set(k, d); } catch (e) {} }
+  if (d) FOTOS[k] = d;
+  return d;
+}
+const P = id => D.prods.find(p => p.id === id);
+async function ponerFoto(el) {
+  el.dataset.ok = '1';
+  const src = await fotoSrc(P(el.dataset.foto));
+  if (src && el.isConnected) { el.style.backgroundImage = `url("${src}")`; el.classList.add('con'); }
+}
+const obs = 'IntersectionObserver' in window ? new IntersectionObserver(es => es.forEach(e => { if (e.isIntersecting) { obs.unobserve(e.target); ponerFoto(e.target); } }), { rootMargin: '300px' }) : null;
+function pintarFotos() { document.querySelectorAll('[data-foto]:not([data-ok])').forEach(el => obs ? obs.observe(el) : ponerFoto(el)); }
+
+/* ---------- PANTALLA ---------- */
+// Precios y cantidades por UNIDAD; la presentación (docena, caja…) solo cambia cómo se muestra y se pide
+const ABREV = { Docena: 'doc', Caja: 'cj', Paquete: 'paq', Tira: 'tira', Display: 'disp', Bulto: 'bulto' };
+const abDe = p => p.factor > 1 ? (ABREV[p.presNom] || String(p.presNom).toLowerCase().slice(0, 4)) : 'und';
+const fmtCant = (p, n) => { if (p.factor === 1) return n + ' und'; const q = Math.floor(n / p.factor), r = n % p.factor; return [q ? q + ' ' + abDe(p) : '', r ? r + ' und' : ''].filter(Boolean).join(' + '); };
+function precioPara(p, cant) {
+  let pr = p.precio; p.escalas.forEach(e => { if (cant >= e.desde) pr = e.precio; });
+  const r = p.factor > 1 ? cant % p.factor : 0;
+  if (r && p.suelto) pr = ((cant - r) * pr + r * p.precioSuelto) / cant;
+  return pr;
+}
+const escTxt = p => p.escalas.map(e => p.factor > 1 && e.desde % p.factor === 0 ? `${e.desde / p.factor}+ ${abDe(p)} ${fmt(e.precio * p.factor)}` : `${e.desde}+ und ${fmt(e.precio)}`).join(' · ');
+const visibles = () => D.prods.filter(p => p.hay || !D.cat.ocultarAgotados).sort((a, b) => a.cat.localeCompare(b.cat) || a.nombre.localeCompare(b.nombre));
+function pintarTodo() { pintarMarca(); pintarInfo(); pintar(); }
+function pintarMarca() {
+  const e = D.empresa || {}, nom = (e.nombre || '').trim() || 'Rizos Pacíficos';
+  $('emp').textContent = nom; $('lema').textContent = e.lema || 'Catálogo de productos';
+  document.title = (DEMO ? '[DEMO] ' : '') + 'Catálogo · ' + nom;
+  const l = $('logo'); if (e.logo) { l.textContent = ''; l.style.backgroundImage = `url("${e.logo}")`; l.style.backgroundColor = '#fff'; } else { l.style.backgroundImage = ''; l.textContent = (e.iniciales || '').trim().toUpperCase().slice(0, 3) || inicialesDe(nom); }
+}
+function telWa() { const t = String(D.cat.whatsapp || (D.empresa || {}).tel || '').replace(/\D/g, ''); return t.length === 10 ? '57' + t : t; }
+function pintarInfo() {
+  const c = D.cat || {}, e = D.empresa || {}, f = D.ts ? new Date(D.ts).toLocaleDateString('es-CO', { day: 'numeric', month: 'long', year: 'numeric' }) : '';
+  const conds = [['Pedido mínimo', c.minimo ? fmt(c.minimo) : ''], ['Formas de pago', c.pagos], ['Entregas', c.entregas], ['WhatsApp pedidos', telWa() ? '+' + telWa().replace(/^57/, '57 ') : ''], ['Dirección', e.dir]].filter(x => x[1]);
+  $('info').innerHTML = `${c.nota ? `<div class="nota">📣 ${esc(c.nota)}</div>` : ''}
+    <div class="conds">${conds.map(([k, v]) => `<div><b>${k}</b>${esc(v)}</div>`).join('')}</div>
+    <div class="small mut" style="margin-top:10px">Precios vigentes${f ? ' al ' + f : ''}. Sujetos a disponibilidad.<span class="no-pdf"> Marca las cantidades y envía tu pedido por WhatsApp.</span></div>`;
+}
+function pintar() {
+  const cats = [...new Set(visibles().map(p => p.cat))];
+  $('chips').innerHTML = [['', 'Todo'], ...cats.map(c => [c, (ICONO_CAT[c] || '📦') + ' ' + c]), ...(Object.keys(CART).length ? [['*', '🛒 Mi pedido']] : [])]
+    .map(([k, t]) => `<button class="chip ${F.cat === k ? 'on' : ''}" data-k="${esc(k)}" onclick="F.cat=this.dataset.k;pintar()">${esc(t)}</button>`).join('');
+  const q = F.q.toLowerCase().trim();
+  const lista = visibles().filter(p => (!q || (p.nombre + ' ' + p.sku).toLowerCase().includes(q)) && (!F.cat || (F.cat === '*' ? CART[p.id] : p.cat === F.cat)));
+  if (!D.prods.length) { $('lista').innerHTML = '<div class="vacio">Cargando productos…</div>'; return barra(); }
+  const grupos = {}; lista.forEach(p => (grupos[p.cat] = grupos[p.cat] || []).push(p));
+  $('lista').innerHTML = Object.entries(grupos).map(([c, ps]) => `<h2 class="cat">${ICONO_CAT[c] || '📦'} ${esc(c)}</h2><div class="grid">${ps.map(tarjeta).join('')}</div>`).join('') || '<div class="vacio">No encontramos productos con esa búsqueda.</div>';
+  pintarFotos(); barra();
+}
+function tarjeta(p) {
+  const n = CART[p.id] || 0, f = p.factor, r = n % f;
+  return `<div class="prod ${n ? 'sel' : ''}" id="t_${p.id}">
+    <div class="ph" data-foto="${p.id}">${ICONO_CAT[p.cat] || '📦'}${p.hay ? '' : '<span class="ago">Agotado</span>'}</div>
+    <div class="pb"><div class="nom">${esc(p.nombre)}</div><div class="cod">${esc(p.sku)}</div>
+      ${f > 1 ? `<div class="cod" style="color:var(--pri);font-weight:700">${esc(p.presNom)} x ${f} und</div>` : ''}
+      <div class="pre">${fmt(Math.round(p.precio * f))}${f > 1 ? `<span style="font-size:12px;font-weight:600"> /${abDe(p)}</span>` : ''}</div>
+      ${f > 1 ? `<div class="cod">${fmt(p.precio)} c/u${p.suelto ? ' · suelta ' + fmt(p.precioSuelto) : ''}</div>` : ''}
+      ${p.escalas.length ? `<div class="esc">${escTxt(p)}</div>` : ''}
+      ${p.hay ? `<div class="qty"><button onclick="cant('${p.id}',${Math.max(0, n - f)})" aria-label="Menos">−</button><input type="number" inputmode="numeric" min="0" value="${Math.floor(n / f) || ''}" placeholder="0" onchange="cant('${p.id}',(parseInt(this.value,10)||0)*${f}+${r})"><button onclick="cant('${p.id}',${n + f})" aria-label="Más">+</button></div>
+      ${f > 1 && p.suelto ? `<div class="cod" style="margin-top:4px;display:flex;align-items:center;gap:6px">Sueltas: <button class="btn sm sec" style="padding:2px 9px" onclick="cant('${p.id}',${r ? n - 1 : n})">−</button><b>${r}</b><button class="btn sm sec" style="padding:2px 9px" onclick="cant('${p.id}',${r < f - 1 ? n + 1 : n})">+</button></div>` : ''}` : ''}
+    </div></div>`;
+}
+function cant(pid, n) {
+  n = Math.max(0, parseInt(n, 10) || 0);
+  if (n) CART[pid] = n; else delete CART[pid];
+  lsSet(LS_CART, CART);
+  const el = $('t_' + pid), p = P(pid);
+  if (el && p) { const t = document.createElement('div'); t.innerHTML = tarjeta(p); el.replaceWith(t.firstElementChild); pintarFotos(); }
+  barra();
+}
+const lineas = () => Object.entries(CART).map(([pid, c]) => ({ p: P(pid), c })).filter(x => x.p && x.p.hay);
+function barra() {
+  const ls = lineas(), b = $('cart');
+  if (!ls.length) { b.style.display = 'none'; return; }
+  const tot = ls.reduce((s, x) => s + x.c * precioPara(x.p, x.c), 0);
+  b.style.display = 'block';
+  b.innerHTML = `<div><div class="grow"><div class="small" style="opacity:.85">${ls.length} producto${ls.length > 1 ? 's' : ''}</div><b style="font-size:17px">${fmt(tot)}</b></div><button class="btn ok" onclick="revisar()">Pedir por WhatsApp</button></div>`;
+}
+
+/* ---------- PEDIDO POR WHATSAPP ---------- */
+function revisar() {
+  const ls = lineas(), tot = ls.reduce((s, x) => s + x.c * precioPara(x.p, x.c), 0), min = +(D.cat || {}).minimo || 0, cli = lsGet(PFX + 'catalogo_cliente', {});
+  $('mbox').innerHTML = `<h3>Tu pedido</h3>
+    ${ls.map(x => `<div class="lin"><span>${fmtCant(x.p, x.c)} × ${esc(x.p.nombre)}</span><b>${fmt(x.c * precioPara(x.p, x.c))}</b></div>`).join('')}
+    <div class="tot"><span>Total aproximado</span><span>${fmt(tot)}</span></div>
+    ${min && tot < min ? `<div class="nota" style="background:#fbe5e2;color:#8a2a1f;border-radius:10px;padding:10px;font-weight:600">El pedido mínimo es ${fmt(min)}. Te faltan ${fmt(min - tot)}.</div>` : ''}
+    <label class="f">Nombre de tu tienda o negocio<input id="pcN" value="${esc(cli.n || '')}" placeholder="Ej: Tienda La Esquina"></label>
+    <label class="f">Barrio / municipio<input id="pcB" value="${esc(cli.b || '')}" placeholder="Ej: Kennedy, Quibdó"></label>
+    <label class="f">Nota (opcional)<textarea id="pcO" rows="2" placeholder="Ej: entregar en la mañana"></textarea></label>
+    <div class="row"><button class="btn sec" onclick="cerrar()">Seguir comprando</button><button class="btn ok" onclick="enviar()">Enviar por WhatsApp</button></div>
+    <div style="text-align:center;margin-top:10px"><button class="btn sm sec" onclick="if(confirm('¿Borrar todo el pedido?')){CART={};lsSet(LS_CART,CART);cerrar();pintar()}">Vaciar pedido</button></div>`;
+  $('modal').classList.add('on');
+}
+function cerrar() { $('modal').classList.remove('on'); }
+function enviar() {
+  const n = $('pcN').value.trim(), b = $('pcB').value.trim();
+  if (!n) { toast('Escribe el nombre de tu tienda'); return $('pcN').focus(); }
+  lsSet(PFX + 'catalogo_cliente', { n, b });
+  const ls = lineas(), tot = ls.reduce((s, x) => s + x.c * precioPara(x.p, x.c), 0), o = $('pcO').value.trim();
+  const txt = `🛒 *Pedido desde el catálogo*\n*${n}*${b ? '\n' + b : ''}\n\n` + ls.map(x => `• ${fmtCant(x.p, x.c)} × ${x.p.nombre} (${x.p.sku}) — ${fmt(x.c * precioPara(x.p, x.c))}`).join('\n') + `\n\n*Total aprox.: ${fmt(tot)}*${o ? '\nNota: ' + o : ''}`;
+  const t = telWa();
+  window.open('https://wa.me/' + (t || '') + '?text=' + encodeURIComponent(txt), '_blank');
+  setTimeout(() => { if (confirm('¿Enviaste el pedido? Si es así, vaciamos la lista.')) { CART = {}; lsSet(LS_CART, CART); cerrar(); pintar(); } }, 1500);
+}
+
+/* ---------- PDF Y COMPARTIR ---------- */
+async function pdf() {
+  const ps = visibles(); F.q = ''; F.cat = ''; $('q').value = ''; pintar();
+  toast('Preparando el PDF con las fotos…');
+  await Promise.all(ps.map(async p => { await fotoSrc(p); }));
+  document.querySelectorAll('[data-foto]').forEach(el => { const p = P(el.dataset.foto), k = p && p.foto ? p.id + '@' + p.foto : ''; if (k && FOTOS[k]) { el.style.backgroundImage = `url("${FOTOS[k]}")`; el.classList.add('con'); el.dataset.ok = '1'; } });
+  setTimeout(() => window.print(), 300);   // en el celular: Imprimir → "Guardar como PDF"
+}
+function compartir() {
+  const url = location.href.split('#')[0].split('?')[0], t = `Catálogo y precios de ${(D.empresa || {}).nombre || 'Rizos Pacíficos'}: ${url}`;
+  if (navigator.share) navigator.share({ title: document.title, text: t, url }).catch(() => {});
+  else window.open('https://wa.me/?text=' + encodeURIComponent(t), '_blank');
+}
+
+/* ---------- ARRANQUE ---------- */
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) { try { navigator.serviceWorker.register(DEMO ? '../sw.js' : 'sw.js').catch(() => {}); } catch (e) {} }
+pintarTodo();
+conectar();
+</script>
+</body>
+</html>
