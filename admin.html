@@ -361,7 +361,7 @@ function pintarConexion() {
 // La foto se comprime en el celular (~480 px, 20-40 KB) y se guarda en fotos/{pid}.
 // productos/{pid}/foto guarda solo la versión (fecha): así cada equipo sabe si la que tiene está vieja.
 // Cada foto se descarga una sola vez y queda en IndexedDB para verla sin señal.
-const NODOS = ['config', 'vendedores', 'productos', 'clientes', 'pedidos', 'notas', 'prospectos', 'compras', 'seq', 'visitas', 'liquidaciones'];
+const NODOS = ['config', 'vendedores', 'productos', 'clientes', 'pedidos', 'notas', 'prospectos', 'compras', 'seq', 'visitas', 'liquidaciones', 'movimientos', 'proveedores', 'ajustes', 'ordenes'];
 const ICONO_CAT = { 'Cremas para peinar': '🧴', 'Shampoo y acondicionador': '🫧', 'Tratamientos': '💆', 'Geles y activadores': '🫙', 'Aceites y mantecas': '🥥', 'Coloración': '🎨', 'Accesorios': '🪮' };
 const FOTOS = {};
 const idb = (() => {
@@ -1321,7 +1321,7 @@ const FI = { q: '', cat: '', bajo: false, nofoto: false };
 function vInventario() {
   const ps = productos(), cats = [...new Set(ps.map(p => p.cat))];
   $('app').innerHTML = `
-  <div class="row between"><h2>Inventario</h2><div class="row"><button class="btn sec" onclick="historialCompras()">Historial de compras</button><button class="btn acc" onclick="entradaMercancia()">+ Entrada de mercancía</button><button class="btn sec" onclick="importarProductos()">⬆ Importar desde Excel</button><button class="btn" onclick="formProducto()">+ Producto</button></div></div>
+  <div class="row between"><h2>Inventario</h2><div class="row"><button class="btn sec" onclick="ordenesCompra()">📝 Órdenes de compra${(n => n ? ' (' + n + ')' : '')(vals(DB.ordenes).filter(o => o.estado === 'enviada' || o.estado === 'parcial').length)}</button><button class="btn sec" onclick="historialCompras()">Historial de compras</button><button class="btn acc" onclick="entradaMercancia()">+ Entrada de mercancía</button><button class="btn sec" onclick="importarProductos()">⬆ Importar desde Excel</button><button class="btn" onclick="formProducto()">+ Producto</button></div></div>
   <div class="kpis">
     <div class="kpi"><div class="l">Referencias</div><div class="v">${ps.length}</div><div class="s">${sum(ps, p => p.stock).toLocaleString('es-CO')} unidades</div></div>
     <div class="kpi"><div class="l">Inventario al costo</div><div class="v">${fmt(sum(ps, p => p.stock * p.costo))}</div><div class="s">A precio de venta ${fmt(sum(ps, p => p.stock * p.precio))}</div></div>
@@ -1532,17 +1532,7 @@ function entradaMercancia(cid) {
       <label class="f" style="width:120px">Costo unit.<input id="enCos" type="text" inputmode="decimal" placeholder="Ej: 7298,93"></label>
       <button class="btn acc" onclick="enAdd()">Agregar</button>
     </div>
-    <div style="margin-top:6px"><button class="btn sm sec" onclick="enNuevoProd()">＋ Producto nuevo</button> <span class="small mut">si no está en la lista, créalo aquí sin salir de la entrada</span></div>
-    <div id="enNP" class="card" style="display:none;margin-top:8px;padding:12px">
-      <div class="fg">
-        <label>Nombre del producto<input id="enNPn" placeholder="Ej: GEL VIBRANTE FAWY X 370"></label>
-        <label>Precio de venta<input id="enNPp" type="number" min="1" inputmode="numeric"></label>
-        <label>Categoría<select id="enNPc">${[...new Set([...Object.keys(ICONO_CAT), ...productos().map(x => x.cat)].filter(Boolean))].sort((a, b) => a.localeCompare(b)).map(c => `<option>${esc(c)}</option>`).join('')}</select></label>
-        <label>Código <span class="small mut">(opcional)</span><input id="enNPs" placeholder="Se genera solo"></label>
-      </div>
-      <div class="small mut" style="margin-top:6px">El costo lo toma de esta factura. Stock mínimo, foto y escalas los puedes poner después en Inventario.</div>
-      <div class="row" style="margin-top:8px;justify-content:flex-end"><button class="btn sm sec" onclick="$('enNP').style.display='none'">Cancelar</button><button class="btn sm ok" onclick="enCrearProd()">✓ Crear y seleccionar</button></div>
-    </div>
+    ${npPanel('en', 'la entrada', 'El costo lo toma de esta factura.')}
     <datalist id="dlProd2">${productos().map(p => `<option value="${esc(p.sku + ' · ' + p.nombre)}">Stock ${fmtCant(p, p.stock)} · mín ${p.min}</option>`).join('')}</datalist>
     <div id="enBody" style="margin-top:12px"></div>`, true);
   $('enProd').addEventListener('keydown', e => { if (e.key === 'Enter') enAdd(); });
@@ -1580,26 +1570,51 @@ function enCostos() {
   const base = sum(ENT.lineas, l => l.cant * l.costo), f = enFlete(), k = base > 0 ? f / base : 0;
   return ENT.lineas.map(l => ({ ...l, fleteU: r2(l.costo * k), final: r2(l.costo * (1 + k)), sub: l.cant * l.costo * (1 + k) }));
 }
-function enNuevoProd() {
-  const b = $('enNP'), v = $('enProd').value.trim(); b.style.display = b.style.display === 'none' ? '' : 'none';
-  if (b.style.display === '' ) { if (v && !pFind(v)) $('enNPn').value = v; $('enNPn').focus(); }
+// Crear producto rápido (sin salir de la entrada de mercancía o de la orden de compra): px = 'en' u 'oc'
+const NP_DL = { en: 'dlProd2', oc: 'dlProdOC' };
+function npPanel(px, donde, notaCosto) {
+  const cats = [...new Set([...Object.keys(ICONO_CAT), ...productos().map(x => x.cat)].filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  return `<div style="margin-top:6px"><button class="btn sm sec" onclick="npToggle('${px}')">＋ Producto nuevo</button> <span class="small mut">si no está en la lista, créalo aquí sin salir de ${donde}</span></div>
+    <div id="${px}NP" class="card" style="display:none;margin-top:8px;padding:12px">
+      <div class="fg">
+        <label>Nombre del producto<input id="${px}NPn" placeholder="Ej: GEL VIBRANTE FAWY X 370"></label>
+        <label>Categoría<select id="${px}NPc">${cats.map(c => `<option>${esc(c)}</option>`).join('')}</select></label>
+        <label>Se vende por<select id="${px}NPf" onchange="npPres('${px}')">${PRES_OPC.map(o => `<option>${o}</option>`).join('')}</select></label>
+        <label id="${px}NPxL" style="display:none">Unidades por presentación<input id="${px}NPx" type="number" min="2" value="12"></label>
+        <label><span id="${px}NPpT">Precio de venta</span><input id="${px}NPp" type="text" inputmode="decimal"></label>
+        <label>Código <span class="small mut">(opcional)</span><input id="${px}NPs" placeholder="Se genera solo"></label>
+      </div>
+      <div class="small mut" style="margin-top:6px">${notaCosto} Stock mínimo, foto y precios por cantidad los puedes poner después en Inventario.</div>
+      <div class="row" style="margin-top:8px;justify-content:flex-end"><button class="btn sm sec" onclick="$('${px}NP').style.display='none'">Cancelar</button><button class="btn sm ok" onclick="npCrear('${px}')">✓ Crear y seleccionar</button></div>
+    </div>`;
 }
-function enCrearProd() {
-  const nombre = $('enNPn').value.trim().replace(/\s+/g, ' '), precio = +$('enNPp').value, cat = $('enNPc').value || 'Otros';
-  let sku = $('enNPs').value.trim().toUpperCase();
+function npToggle(px) {
+  const b = $(px + 'NP'), v = $(px + 'Prod').value.trim(); b.style.display = b.style.display === 'none' ? '' : 'none';
+  if (b.style.display === '') { if (v && !pFind(v)) $(px + 'NPn').value = v; npPres(px); $(px + 'NPn').focus(); }
+}
+function npPres(px) {
+  const n = $(px + 'NPf').value; $(px + 'NPxL').style.display = n === 'Unidad' || n === 'Docena' ? 'none' : '';
+  $(px + 'NPpT').textContent = n === 'Unidad' ? 'Precio de venta' : 'Precio de venta por ' + n.toLowerCase();
+}
+function npCrear(px) {
+  const nombre = $(px + 'NPn').value.trim().replace(/\s+/g, ' '), precioP = numIn($(px + 'NPp').value), cat = $(px + 'NPc').value || 'Otros', pn = $(px + 'NPf').value;
+  const f = pn === 'Unidad' ? 1 : pn === 'Docena' ? 12 : parseInt($(px + 'NPx').value, 10) || 0;
+  let sku = $(px + 'NPs').value.trim().toUpperCase();
   if (!nombre) return toast('Escribe el nombre del producto');
-  if (!(precio > 0)) return toast('Escribe el precio de venta');
+  if (pn !== 'Unidad' && pn !== 'Docena' && !(f >= 2)) return toast('Escribe cuántas unidades trae la ' + pn.toLowerCase());
+  if (!(precioP > 0)) return toast('Escribe el precio de venta');
   if (productos().some(x => x.nombre.toLowerCase() === nombre.toLowerCase()) && !confirm('Ya existe un producto llamado "' + nombre + '". ¿Crear otro igual?')) return;
   if (!sku) { const usados = new Set(productos().map(x => x.sku)); let n = productos().length + 1; while (usados.has('P' + pad(n, 4))) n++; sku = 'P' + pad(n, 4); }
   if (productos().some(x => x.sku === sku)) return toast('Ya existe un producto con ese código');
   const id = uid('P');
-  guardar({ ['productos/' + id]: { id, sku, cat, nombre, costo: 0, precio, min: 0, escalas: null, stock: 0 } });
-  $('dlProd2').innerHTML = productos().map(p => `<option value="${esc(p.sku + ' · ' + p.nombre)}">Stock ${fmtCant(p, p.stock)} · mín ${p.min}</option>`).join('');
-  $('enProd').value = sku + ' · ' + nombre; $('enCos').value = '';
-  ['enNPn', 'enNPp', 'enNPs'].forEach(k => $(k).value = ''); $('enNP').style.display = 'none';
-  $('enCant').focus(); $('enCant').select();
+  guardar({ ['productos/' + id]: { id, sku, cat, nombre, costo: 0, precio: Math.round(precioP / f * 100) / 100, min: 0, escalas: null, stock: 0, factor: f > 1 ? f : null, presNom: f > 1 ? pn : null } });
+  $(NP_DL[px]).innerHTML = productos().map(p => `<option value="${esc(p.sku + ' · ' + p.nombre)}">Stock ${fmtCant(p, p.stock)} · mín ${p.min}</option>`).join('');
+  $(px + 'Prod').value = sku + ' · ' + nombre; $(px + 'Cos').value = '';
+  [px + 'NPn', px + 'NPp', px + 'NPs'].forEach(k => $(k).value = ''); $(px + 'NP').style.display = 'none';
+  $(px + 'Cant').focus(); $(px + 'Cant').select();
   toast('✅ Producto ' + sku + ' creado · pon cantidad y costo y dale Agregar');
 }
+const enNuevoProd = () => npToggle('en'), enCrearProd = () => npCrear('en');
 function enAdd() {
   const p = pFind($('enProd').value.trim()), cant = parseInt($('enCant').value, 10), costo = numIn($('enCos').value);
   if (!p) return toast('Selecciona un producto de la lista');
@@ -1609,7 +1624,7 @@ function enAdd() {
 function enRender() {
   const LC = enCostos(), flete = enFlete(), base = sum(ENT.lineas, l => l.cant * l.costo);
   enPagoUI();
-  $('enBody').innerHTML = `<div class="tw"><table><thead><tr><th>Producto</th><th class="n">Cant.</th><th class="n">Costo factura</th>${flete ? '<th class="n">+ Flete c/u</th><th class="n">Costo final</th>' : ''}<th class="n">Subtotal</th><th></th></tr></thead><tbody>${LC.map((l, i) => { const p = P(l.pid); return `<tr><td style="white-space:normal">${esc(p.nombre)}${l.final !== p.costo ? `<div class="small" style="color:var(--warn)">Costo anterior ${fmt(p.costo)} → margen ${p.precio ? ((p.precio - l.final) / p.precio * 100).toFixed(0) : 0}%</div>` : ''}</td><td class="n"><input type="number" min="1" value="${l.cant}" style="width:70px;text-align:right" onchange="ENT.lineas[${i}].cant=Math.max(1,parseInt(this.value,10)||1);enRender()">${factorDe(p) > 1 ? `<div class="small mut">= ${fmtCant(p, l.cant)}</div>` : ''}</td><td class="n"><input type="text" inputmode="decimal" value="${String(l.costo).replace('.', ',')}" style="width:100px;text-align:right" onchange="const v=numIn(this.value);if(v>0)ENT.lineas[${i}].costo=v;enRender()"></td>${flete ? `<td class="n">${fmtC(l.fleteU)}</td><td class="n"><b>${fmtC(l.final)}</b></td>` : ''}<td class="n">${fmt(l.sub)}</td><td><button class="btn sm sec" onclick="ENT.lineas.splice(${i},1);enRender()">✕</button></td></tr>`; }).join('') || `<tr><td colspan="${flete ? 7 : 5}" class="mut">Agrega los productos de la factura del proveedor.</td></tr>`}</tbody></table></div>
+  $('enBody').innerHTML = `<div class="tw"><table><thead><tr><th>Producto</th><th class="n">Cant.</th><th class="n">Costo factura</th>${flete ? '<th class="n">+ Flete c/u</th><th class="n">Costo final</th>' : ''}<th class="n">Subtotal</th><th></th></tr></thead><tbody>${LC.map((l, i) => { const p = P(l.pid); return `<tr><td style="white-space:normal">${esc(p.nombre)}${l.final !== p.costo ? `<div class="small" style="color:var(--warn)">Costo anterior ${fmt(p.costo)} → margen ${p.precio ? ((p.precio - l.final) / p.precio * 100).toFixed(0) : 0}%</div>` : ''}</td><td class="n"><input type="number" min="1" value="${l.cant}" style="width:70px;text-align:right" onchange="ENT.lineas[${i}].cant=Math.max(1,parseInt(this.value,10)||1);setTimeout(enRender)">${factorDe(p) > 1 ? `<div class="small mut">= ${fmtCant(p, l.cant)}</div>` : ''}</td><td class="n"><input type="text" inputmode="decimal" value="${String(l.costo).replace('.', ',')}" style="width:100px;text-align:right" onchange="const v=numIn(this.value);if(v>0)ENT.lineas[${i}].costo=v;setTimeout(enRender)"></td>${flete ? `<td class="n">${fmtC(l.fleteU)}</td><td class="n"><b>${fmtC(l.final)}</b></td>` : ''}<td class="n">${fmt(l.sub)}</td><td><button class="btn sm sec" onclick="ENT.lineas.splice(${i},1);enRender()">✕</button></td></tr>`; }).join('') || `<tr><td colspan="${flete ? 7 : 5}" class="mut">Agrega los productos de la factura del proveedor.</td></tr>`}</tbody></table></div>
   ${flete ? `<div class="tot" style="max-width:300px;margin-left:auto"><span>Mercancía</span><span>${fmt(base)}</span></div><div class="tot" style="max-width:300px;margin-left:auto"><span>Flete</span><span>${fmt(flete)}</span></div>` : ''}
   <div class="tot big" style="max-width:300px;margin-left:auto"><span>Total compra</span><span>${fmt(base + flete)}</span></div>
   <div class="mfoot"><button class="btn sec" onclick="closeModal()">Cancelar</button><button class="btn" id="btnEnt" onclick="guardarEntrada()">${ENT.edit ? 'Guardar cambios' : 'Guardar entrada'}</button></div>`;
@@ -1635,7 +1650,14 @@ async function guardarEntrada() {
   for (const pid in sube) upd[`productos/${pid}/stock`] = P(pid).stock + sube[pid];
   upd['compras/' + id] = { id, fecha: $('enFec').value || TODAY(), proveedor: prov, facturaProv: $('enFacP').value.trim(), lineas: LC.map(l => ({ pid: l.pid, cant: l.cant, costo: l.final, costoFactura: l.costo, costoAnt: P(l.pid).costo })), flete, total: merc + flete, condicion: cond, plazo: cond === 'credito' ? plazo : 0, vence: cond === 'credito' ? addDays(fec, plazo) : fec, fleteModo: fMod, transportadora: trans };
   const provs = DB.config.proveedores || []; if (!provs.includes(prov)) upd['config/proveedores'] = [...provs, prov];
-  guardar(upd); closeModal(); render(); toast('Entrada ' + id + ' registrada · stock actualizado');
+  if (ENT.oc && DB.ordenes && DB.ordenes[ENT.oc]) {   // vino de una orden de compra: se marca lo recibido
+    const oc = DB.ordenes[ENT.oc], rec = { ...(oc.recibido || {}) };
+    LC.forEach(l => { if ((oc.lineas || []).some(x => x.pid === l.pid)) rec[l.pid] = (rec[l.pid] || 0) + l.cant; });
+    const completa = (oc.lineas || []).every(x => (rec[x.pid] || 0) >= x.cant);
+    upd[`ordenes/${ENT.oc}/recibido`] = rec; upd[`ordenes/${ENT.oc}/compras`] = [...(oc.compras || []), id];
+    upd[`ordenes/${ENT.oc}/estado`] = completa ? 'recibida' : 'parcial'; upd['compras/' + id].ocId = ENT.oc;
+  }
+  guardar(upd); closeModal(); render(); toast('Entrada ' + id + ' registrada · stock actualizado' + (ENT.oc ? ' · ' + ENT.oc + ' actualizada' : ''));
 }
 // Editar compra: aplica solo la DIFERENCIA (stock, costo de productos y pagos automáticos) y guarda la versión anterior.
 function guardarEdicionCompra(cid) {
@@ -1689,6 +1711,159 @@ function guardarEdicionCompra(cid) {
   guardar(upd); closeModal(); render(); historialCompras();
   toast('✅ Compra ' + cid + ' corregida');
   if (sinTocar.length || avisos.length) setTimeout(() => alert([...avisos, ...(sinTocar.length ? ['No cambié el costo actual de: ' + sinTocar.join(', ') + ' (entró otra compra después que ya lo actualizó).'] : [])].join('\n\n')), 300);
+}
+/* ---------- ÓRDENES DE COMPRA ----------
+   ordenes/{id}: { id: 'OC-0001', fecha, proveedor, nota, lineas: [{ pid, cant (und), costo (por und), desc (%) }], descPie (%),
+                   estado: borrador | enviada | parcial | recibida | anulada, recibido: { pid: und }, compras: [COM-…] }
+   La orden NO mueve inventario ni dinero: eso pasa al recibirla (se abre la Entrada de mercancía ya llena). */
+const OC_EST = { borrador: ['mut', 'Borrador'], enviada: ['info', 'Enviada'], parcial: ['warn', 'Recibida parcial'], recibida: ['ok', 'Recibida'], anulada: ['bad', 'Anulada'] };
+const bOC = e => `<span class="b ${(OC_EST[e] || OC_EST.borrador)[0]}">${(OC_EST[e] || OC_EST.borrador)[1]}</span>`;
+const plural = (w, k) => k === 1 ? w : /[aeiou]$/i.test(w) ? w + 's' : w + 'es';
+function cantLarga(p, n) {   // "5 docenas", "2 cajas + 3 unidades", "12 unidades"
+  const { f, nom } = presDe(p); if (f === 1) return `${n} ${plural('unidad', n)}`;
+  const q = Math.floor(n / f), r = n % f, w = nom.toLowerCase();
+  return [q ? `${q} ${plural(w, q)}` : '', r ? `${r} ${plural('unidad', r)}` : ''].filter(Boolean).join(' + ');
+}
+function ocTotales(lineas, descPie) {
+  const bruto = sum(lineas, l => l.cant * l.costo), descL = sum(lineas, l => l.cant * l.costo * (+l.desc || 0) / 100), neto = bruto - descL;
+  const descP = neto * (+descPie || 0) / 100;
+  return { bruto: Math.round(bruto), descL: Math.round(descL), neto: Math.round(neto), descP: Math.round(descP), total: Math.round(neto - descP) };
+}
+// costo real por unidad después de los dos descuentos (es el que entra al inventario al recibir)
+const ocCostoNeto = (l, descPie) => Math.round(l.costo * (1 - (+l.desc || 0) / 100) * (1 - (+descPie || 0) / 100) * 100) / 100;
+function ordenesCompra() {
+  const os = vals(DB.ordenes).sort((a, b) => (b.ts || 0) - (a.ts || 0));
+  openModal('Órdenes de compra', `
+    <div class="row between" style="margin-bottom:10px"><span class="small mut">Pedidos a proveedores. No mueven inventario ni caja hasta que los recibes.</span><button class="btn" onclick="formOC()">+ Nueva orden</button></div>
+    <div class="tw"><table><thead><tr><th>Orden</th><th>Fecha</th><th>Proveedor</th><th class="n">Ítems</th><th class="n">Total</th><th>Estado</th></tr></thead><tbody>
+    ${os.map(o => `<tr class="clk" onclick="verOC('${o.id}')"><td><b>${o.id}</b></td><td>${fFecha(o.fecha)}</td><td>${esc(o.proveedor)}</td><td class="n">${(o.lineas || []).length}</td><td class="n">${fmt(ocTotales(o.lineas || [], o.descPie).total)}</td><td>${bOC(o.estado)}</td></tr>`).join('') || '<tr><td colspan="6" class="mut">Aún no hay órdenes de compra.</td></tr>'}
+    </tbody></table></div>`, true);
+}
+let OCED = null;
+function formOC(id) {
+  const o = id ? DB.ordenes[id] : null, prov = nombresProveedores();
+  OCED = { id: id || null, lineas: o ? (o.lineas || []).filter(l => P(l.pid)).map(l => ({ ...l })) : [] };
+  openModal(o ? 'Editar ' + id : 'Nueva orden de compra', `
+    <div class="fg">
+      <label>Proveedor<input id="ocProv" list="dlProvOC" value="${esc(o ? o.proveedor : '')}" placeholder="Escoge o escribe"><datalist id="dlProvOC">${prov.map(p => `<option value="${esc(p)}">`).join('')}</datalist></label>
+      <label>Fecha<input id="ocFec" type="date" value="${o ? o.fecha : TODAY()}"></label>
+    </div>
+    <div class="row" style="margin-top:12px;align-items:flex-end;flex-wrap:wrap">
+      <label class="f grow" style="min-width:200px">Producto<input id="ocProd" list="dlProdOC" placeholder="Nombre o código…"></label>
+      <label class="f" style="width:80px">Cant. (und)<input id="ocCant" type="number" min="1" inputmode="numeric"></label>
+      <label class="f" style="width:110px">Costo unit.<input id="ocCos" type="text" inputmode="decimal" placeholder="Ej: 2995,77"></label>
+      <label class="f" style="width:70px">Desc. %<input id="ocDes" type="text" inputmode="decimal" placeholder="0"></label>
+      <button class="btn acc" onclick="ocAdd()">Agregar</button>
+    </div>
+    ${npPanel('oc', 'la orden', 'El costo lo escribes en la orden.')}
+    <datalist id="dlProdOC">${productos().map(p => `<option value="${esc(p.sku + ' · ' + p.nombre)}">Stock ${fmtCant(p, p.stock)}${factorDe(p) > 1 ? ' · ' + presDe(p).nom + ' x ' + factorDe(p) : ''}</option>`).join('')}</datalist>
+    <div id="ocBody" style="margin-top:12px"></div>
+    <div class="fg" style="margin-top:10px">
+      <label>Descuento a pie de factura (%)<input id="ocPie" type="text" inputmode="decimal" value="${o && o.descPie ? String(o.descPie).replace('.', ',') : ''}" placeholder="0" oninput="ocRender(true)"></label>
+      <label>Nota para el proveedor (opcional)<input id="ocNota" value="${esc(o ? o.nota || '' : '')}" placeholder="Ej: despachar por Coordinadora"></label>
+    </div>
+    <div id="ocTot" style="margin-top:8px"></div>
+    <div class="mfoot"><button class="btn sec" onclick="${o ? `verOC('${id}')` : 'ordenesCompra()'}">Cancelar</button><button class="btn" onclick="guardarOC()">${o ? 'Guardar cambios' : 'Guardar orden'}</button></div>`, true);
+  $('ocProd').addEventListener('keydown', e => { if (e.key === 'Enter') ocAdd(); });
+  ['ocCant', 'ocCos', 'ocDes'].forEach(k => $(k).addEventListener('keydown', e => { if (e.key === 'Enter') ocAdd(); }));
+  ocRender();
+}
+function ocAdd() {
+  const p = pFind($('ocProd').value.trim()), cant = parseInt($('ocCant').value, 10), costo = numIn($('ocCos').value), desc = numCO($('ocDes').value) || 0;
+  if (!p) return toast('Selecciona un producto de la lista');
+  if (!(cant > 0)) return toast('Escribe la cantidad en unidades');
+  if (!(costo > 0)) return toast('Escribe el costo unitario');
+  if (desc < 0 || desc >= 100) return toast('El descuento debe estar entre 0 y 99 %');
+  OCED.lineas.push({ pid: p.id, cant, costo, desc });
+  ['ocProd', 'ocCant', 'ocCos', 'ocDes'].forEach(k => $(k).value = ''); $('ocProd').focus(); ocRender();
+}
+function ocRender(soloTot) {
+  const pie = numCO($('ocPie').value) || 0;
+  if (!soloTot) $('ocBody').innerHTML = `<div class="tw"><table><thead><tr><th>Producto</th><th class="n">Cant. (und)</th><th class="n">Costo unit.</th><th class="n">Desc. %</th><th class="n">Subtotal</th><th></th></tr></thead><tbody>${OCED.lineas.map((l, i) => { const p = P(l.pid); return `<tr><td style="white-space:normal">${esc(p.nombre)}<div class="small mut">${esc(p.sku)}${factorDe(p) > 1 ? ' · ' + presDe(p).nom + ' x ' + factorDe(p) : ''}</div></td>
+      <td class="n"><input type="number" min="1" value="${l.cant}" style="width:76px;text-align:right" onchange="OCED.lineas[${i}].cant=Math.max(1,parseInt(this.value,10)||1);setTimeout(ocRender)">${factorDe(p) > 1 ? `<div class="small mut">= ${fmtCant(p, l.cant)}</div>` : ''}</td>
+      <td class="n"><input type="text" inputmode="decimal" value="${String(l.costo).replace('.', ',')}" style="width:96px;text-align:right" onchange="const v=numIn(this.value);if(v>0)OCED.lineas[${i}].costo=v;setTimeout(ocRender)"></td>
+      <td class="n"><input type="text" inputmode="decimal" value="${l.desc ? String(l.desc).replace('.', ',') : ''}" placeholder="0" style="width:60px;text-align:right" onchange="const v=numCO(this.value)||0;if(v>=0&&v<100)OCED.lineas[${i}].desc=v;setTimeout(ocRender)"></td>
+      <td class="n">${fmt(l.cant * l.costo * (1 - (+l.desc || 0) / 100))}</td><td><button class="btn sm sec" onclick="OCED.lineas.splice(${i},1);setTimeout(ocRender)">✕</button></td></tr>`; }).join('') || '<tr><td colspan="6" class="mut">Agrega los productos que le vas a pedir al proveedor.</td></tr>'}</tbody></table></div>`;
+  const t = ocTotales(OCED.lineas, pie), R = (k, v, b) => `<div class="tot${b ? ' big' : ''}" style="max-width:320px;margin-left:auto"><span>${k}</span><span>${v}</span></div>`;
+  $('ocTot').innerHTML = R('Subtotal', fmt(t.bruto)) + (t.descL ? R('Descuentos en línea', '−' + fmt(t.descL)) : '') + (t.descP ? R(`Descuento pie de factura (${pie}%)`, '−' + fmt(t.descP)) : '') + R('Total orden', fmt(t.total), 1);
+}
+async function guardarOC() {
+  const prov = $('ocProv').value.trim().replace(/\s+/g, ' '), pie = numCO($('ocPie').value) || 0;
+  if (!prov) return toast('Escribe el proveedor');
+  if (!OCED.lineas.length) return toast('Agrega al menos un producto');
+  if (pie < 0 || pie >= 100) return toast('El descuento a pie de factura debe estar entre 0 y 99 %');
+  let id = OCED.id;
+  if (!id) { let n; try { n = await siguiente('oc'); } catch (e) { return toast(e.message); } id = 'OC-' + pad(n, 4); }
+  const viejo = DB.ordenes && DB.ordenes[id];
+  const o = { ...(viejo || {}), id, fecha: $('ocFec').value || TODAY(), proveedor: prov, nota: $('ocNota').value.trim(), lineas: OCED.lineas.map(l => ({ pid: l.pid, cant: l.cant, costo: l.costo, desc: +l.desc || 0 })), descPie: pie, estado: viejo ? viejo.estado : 'borrador', ts: viejo ? viejo.ts : Date.now() };
+  if (viejo) o.editadoTs = Date.now();
+  const upd = { ['ordenes/' + id]: o }, provs = DB.config.proveedores || []; if (!provs.includes(prov)) upd['config/proveedores'] = [...provs, prov];
+  guardar(upd); toast('✅ ' + id + ' guardada'); verOC(id);
+}
+function verOC(id) {
+  const o = DB.ordenes[id], t = ocTotales(o.lineas || [], o.descPie), rec = o.recibido || {}, abierta = o.estado === 'borrador' || o.estado === 'enviada';
+  const pv = provPorNombre(o.proveedor), R = (k, v, b) => `<div class="tot${b ? ' big' : ''}" style="max-width:320px;margin-left:auto"><span>${k}</span><span>${v}</span></div>`;
+  openModal('Orden de compra ' + id, `
+    <div class="row" style="margin-bottom:10px">${bOC(o.estado)}<span class="small mut">${fFecha(o.fecha)} · <b>${esc(o.proveedor)}</b>${pv && pv.telefono ? ' · ' + esc(pv.telefono) : ''}${o.compras && o.compras.length ? ' · entradas: ' + o.compras.join(', ') : ''}</span></div>
+    ${o.nota ? `<div class="alert info">📝 ${esc(o.nota)}</div>` : ''}
+    <div class="tw"><table><thead><tr><th>Producto</th><th class="n">Pedido</th><th class="n">Costo unit.</th><th class="n">Desc.</th><th class="n">Subtotal</th>${o.estado === 'parcial' || o.estado === 'recibida' ? '<th class="n">Recibido</th>' : ''}</tr></thead><tbody>
+    ${(o.lineas || []).map(l => { const p = P(l.pid) || { nombre: l.pid, sku: '' }; return `<tr><td style="white-space:normal">${esc(p.nombre)}<div class="small mut">${esc(p.sku)}</div></td><td class="n">${fmtCant(p, l.cant)}${factorDe(p) > 1 ? `<div class="small mut">${l.cant} und</div>` : ''}</td><td class="n">${fmtC(l.costo)}</td><td class="n">${l.desc ? l.desc + '%' : '—'}</td><td class="n">${fmt(l.cant * l.costo * (1 - (+l.desc || 0) / 100))}</td>${o.estado === 'parcial' || o.estado === 'recibida' ? `<td class="n"><span class="b ${(rec[l.pid] || 0) >= l.cant ? 'ok' : 'warn'}">${fmtCant(p, rec[l.pid] || 0)}</span></td>` : ''}</tr>`; }).join('')}
+    </tbody></table></div>
+    <div style="margin-top:8px">${R('Subtotal', fmt(t.bruto))}${t.descL ? R('Descuentos en línea', '−' + fmt(t.descL)) : ''}${t.descP ? R(`Descuento pie de factura (${o.descPie}%)`, '−' + fmt(t.descP)) : ''}${R('Total orden', fmt(t.total), 1)}</div>
+    <div class="mfoot" style="flex-wrap:wrap;gap:6px">
+      <button class="btn sec" onclick="ordenesCompra()">‹ Órdenes</button>
+      ${o.estado !== 'anulada' && o.estado !== 'recibida' ? `<button class="btn bad" onclick="anularOC('${id}')">Anular</button>` : ''}
+      ${abierta ? `<button class="btn sec" onclick="formOC('${id}')">✏️ Editar</button>` : ''}
+      <button class="btn sec" onclick="imprimirOC('${id}')">🖨 PDF</button>
+      ${o.estado !== 'anulada' ? `<button class="btn sec" onclick="enviarOC('${id}')">💬 WhatsApp</button>` : ''}
+      ${o.estado === 'parcial' ? `<button class="btn sec" onclick="cerrarOC('${id}')">Cerrar (no llega lo demás)</button>` : ''}
+      ${o.estado === 'enviada' || o.estado === 'borrador' || o.estado === 'parcial' ? `<button class="btn acc" onclick="recibirOC('${id}')">📦 Recibir mercancía</button>` : ''}
+    </div>`, true);
+}
+function textoOC(o) {
+  const t = ocTotales(o.lineas || [], o.descPie), L = '━━━━━━━━━━━━━━━';
+  const items = (o.lineas || []).map((l, i) => { const p = P(l.pid) || { nombre: l.pid, sku: '' }; return `*${i + 1}. ${p.nombre}*  _(${p.sku})_\n     ${cantLarga(p, l.cant)}${factorDe(p) > 1 ? ` (${l.cant} und)` : ''} × ${fmtC(l.costo)} c/u${l.desc ? ` · desc. ${l.desc}%` : ''} = *${fmt(l.cant * l.costo * (1 - (+l.desc || 0) / 100))}*`; });
+  return [`📝 *ORDEN DE COMPRA ${o.id}*`, `*${EMPRESA}*`, `Fecha: ${fFecha(o.fecha)}`, `Proveedor: *${o.proveedor}*`, L, items.join('\n\n'), L,
+    `Subtotal: ${fmt(t.bruto)}`, t.descL ? `Descuentos en línea: −${fmt(t.descL)}` : '', t.descP ? `Descuento pie de factura (${o.descPie}%): −${fmt(t.descP)}` : '', `*TOTAL: ${fmt(t.total)}*`,
+    o.nota ? `\n📝 ${o.nota}` : '', `\nPor favor confirmar disponibilidad y fecha de despacho. ¡Gracias!`].filter(Boolean).join('\n');
+}
+function enviarOC(id) {
+  const o = DB.ordenes[id], pv = provPorNombre(o.proveedor), tel = pv && pv.telefono ? pv.telefono.replace(/\D/g, '') : '';
+  window.open(tel.length === 10 ? waLink(tel, textoOC(o)) : 'https://wa.me/?text=' + encodeURIComponent(textoOC(o)), '_blank');
+  if (!tel) toast('El proveedor no tiene teléfono guardado: escoge el chat en WhatsApp');
+  if (o.estado === 'borrador') { guardar({ [`ordenes/${id}/estado`]: 'enviada', [`ordenes/${id}/enviadaTs`]: Date.now() }); verOC(id); }
+}
+function imprimirOC(id) {
+  const o = DB.ordenes[id], t = ocTotales(o.lineas || [], o.descPie), pv = provPorNombre(o.proveedor), e = DB.config.empresa || {};
+  $('print').innerHTML = `<div class="doc">
+    <div class="hd"><div style="display:flex;align-items:center;gap:10px">${logoDoc(52)}<div><h1>${esc(EMPRESA)}</h1><div>${esc(e.doc || '')}${e.tel ? ' · Tel. ' + esc(e.tel) : ''}${e.dir ? '<br>' + esc(e.dir) : ''}</div></div></div><div style="text-align:right"><b style="font-size:16px">ORDEN DE COMPRA</b><br><b>${o.id}</b><br>Fecha: ${fFecha(o.fecha)}</div></div>
+    <p><b>Proveedor:</b> ${esc(o.proveedor)}${pv && pv.nit ? ' · NIT ' + esc(pv.nit) : ''}${pv && pv.contacto ? '<br><b>Contacto:</b> ' + esc(pv.contacto) : ''}${pv && pv.telefono ? ' · Tel. ' + esc(pv.telefono) : ''}${pv && pv.ciudad ? ' · ' + esc(pv.ciudad) : ''}</p>
+    <table><thead><tr><th>#</th><th>Código</th><th>Producto</th><th style="text-align:right">Cantidad</th><th style="text-align:right">Costo unit.</th><th style="text-align:right">Desc.</th><th style="text-align:right">Subtotal</th></tr></thead><tbody>
+    ${(o.lineas || []).map((l, i) => { const p = P(l.pid) || { nombre: l.pid, sku: '' }; return `<tr><td>${i + 1}</td><td>${esc(p.sku)}</td><td>${esc(p.nombre)}</td><td style="text-align:right">${cantLarga(p, l.cant)}${factorDe(p) > 1 ? `<br><small>${l.cant} und</small>` : ''}</td><td style="text-align:right">${fmtC(l.costo)}</td><td style="text-align:right">${l.desc ? l.desc + '%' : ''}</td><td style="text-align:right">${fmt(l.cant * l.costo * (1 - (+l.desc || 0) / 100))}</td></tr>`; }).join('')}</tbody></table>
+    <table style="width:auto;margin:10px 0 0 auto"><tbody><tr><td>Subtotal</td><td style="text-align:right">${fmt(t.bruto)}</td></tr>${t.descL ? `<tr><td>Descuentos en línea</td><td style="text-align:right">−${fmt(t.descL)}</td></tr>` : ''}${t.descP ? `<tr><td>Descuento pie de factura (${o.descPie}%)</td><td style="text-align:right">−${fmt(t.descP)}</td></tr>` : ''}<tr><td><b>TOTAL</b></td><td style="text-align:right"><b>${fmt(t.total)}</b></td></tr></tbody></table>
+    ${o.nota ? `<p><b>Nota:</b> ${esc(o.nota)}</p>` : ''}
+    <div class="firmas"><div>Elaboró</div><div>Recibido proveedor</div></div></div>`;
+  window.print();
+}
+function anularOC(id) {
+  const mot = prompt('Anular ' + id + '. Escribe el motivo:'); if (!mot) return;
+  guardar({ [`ordenes/${id}/estado`]: 'anulada', [`ordenes/${id}/motivo`]: mot, [`ordenes/${id}/anuladaTs`]: Date.now() }); toast(id + ' anulada'); verOC(id);
+}
+function cerrarOC(id) {
+  if (!confirm('¿Cerrar ' + id + '? Lo que falta por llegar ya no se espera.')) return;
+  guardar({ [`ordenes/${id}/estado`]: 'recibida', [`ordenes/${id}/cerradaIncompleta`]: true }); toast(id + ' cerrada'); verOC(id);
+}
+// Recibir: abre la Entrada de mercancía con lo pendiente y el costo neto (ya con descuentos). Se ajusta a la factura real y se guarda.
+function recibirOC(id) {
+  const o = DB.ordenes[id], rec = o.recibido || {};
+  const pend = (o.lineas || []).filter(l => P(l.pid)).map(l => ({ pid: l.pid, cant: l.cant - (rec[l.pid] || 0), costo: ocCostoNeto(l, o.descPie) })).filter(l => l.cant > 0);
+  if (!pend.length) return toast('Ya se recibió todo lo de esta orden');
+  entradaMercancia();
+  ENT.lineas = pend; ENT.oc = id;
+  $('enProv').value = o.proveedor; enProvSel();
+  $('mTitle').textContent = 'Recibir ' + id + ' · entrada de mercancía';
+  $('enBody').insertAdjacentHTML('beforebegin', `<div class="alert info" style="margin-top:10px">Viene de <b>${id}</b> con lo pendiente y el costo ya con descuentos. Corrige cantidades o costos si la factura del proveedor llegó distinta, agrega el N° de factura y el flete, y guarda.</div>`);
+  enRender();
 }
 function historialCompras() {
   const cs = vals(DB.compras).sort((a, b) => b.fecha.localeCompare(a.fecha));
