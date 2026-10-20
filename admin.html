@@ -1185,7 +1185,7 @@ function formCliente(cid, pr) {
       <label>Municipio<select id="fcMun">${MUNICIPIOS.map(m => `<option ${c.municipio === m ? 'selected' : ''}>${m}</option>`).join('')}</select></label>
       <label>Barrio / dirección<input id="fcBar" value="${esc(c.barrio || '')}"></label>
       <label>Vendedor asignado<select id="fcVen">${vendedores().map(v => `<option value="${v.id}" ${c.vendedorId === v.id ? 'selected' : ''}>${esc(v.nombre)} (${esc(v.zona)})</option>`).join('')}</select></label>
-      <label>Condición de pago<select id="fcPla"><option value="0" ${!c.plazo ? 'selected' : ''}>Contado</option><option value="15" ${c.plazo == 15 ? 'selected' : ''}>Crédito 15 días</option><option value="30" ${c.plazo == 30 ? 'selected' : ''}>Crédito 30 días</option></select></label>
+      <label>Condición de pago<select id="fcPla"><option value="0" ${!c.plazo ? 'selected' : ''}>Contado</option><option value="8" ${c.plazo == 8 ? 'selected' : ''}>Crédito 8 días</option><option value="15" ${c.plazo == 15 ? 'selected' : ''}>Crédito 15 días</option><option value="30" ${c.plazo == 30 ? 'selected' : ''}>Crédito 30 días</option></select></label>
       <label>Cupo de crédito<input id="fcCupo" type="number" min="0" step="50000" value="${c.cupo || 0}"></label>
     </div>
     <div class="small" style="margin-top:12px;font-weight:600;color:var(--mut)">Días de visita (rutero)</div>
@@ -1327,6 +1327,8 @@ function vInventario() {
     <div class="kpi"><div class="l">Inventario al costo</div><div class="v">${fmt(sum(ps, p => p.stock * p.costo))}</div><div class="s">A precio de venta ${fmt(sum(ps, p => p.stock * p.precio))}</div></div>
     <div class="kpi"><div class="l">Comprometido por aprobar</div><div class="v">${sum(pedidos().filter(o => o.estado === 'por_aprobar'), o => sum(lineasDe(o), l => l.cant))} und</div><div class="s">En pedidos pendientes</div></div>
     <div class="kpi"><div class="l">Bajo el mínimo</div><div class="v" style="color:var(--bad)">${ps.filter(p => p.stock <= p.min).length}</div><div class="s">${ps.filter(p => p.stock === 0).length} agotados</div></div>
+    ${(r => `<div class="kpi" title="Margen = (precio − costo) ÷ precio. Markup = (precio − costo) ÷ costo."><div class="l">Rentabilidad del inventario</div><div class="v" style="color:var(--ok)">${r.margen != null ? r.margen.toFixed(1) + '%' : '—'}</div><div class="s">${r.margen != null ? `Markup ${r.markup.toFixed(1)}% · ganancia ${fmt(r.gan)}` : 'Sin productos con costo'}${r.sinCosto ? `<br><span style="color:var(--bad)">${r.sinCosto} con stock sin costo (no cuentan)</span>` : ''}</div></div>`)(rentInventario())}
+    ${(r => `<div class="kpi" title="Lo realmente facturado en los últimos 90 días (con descuentos) contra el costo de esas unidades."><div class="l">Rentabilidad real · ventas 90 días</div><div class="v" style="color:var(--ok)">${r.margen != null ? r.margen.toFixed(1) + '%' : '—'}</div><div class="s">${r.margen != null ? `Markup ${r.markup.toFixed(1)}% · ganancia ${fmt(r.gan)} de ${fmt(r.venta)}` : 'Aún no hay ventas con costo'}${r.sinCosto ? `<br><span style="color:var(--bad)">${r.sinCosto} líneas vendidas sin costo (no cuentan)</span>` : ''}</div></div>`)(rentVentas(90))}
   </div>
   <div class="row" style="margin-bottom:10px">
     <input class="grow" placeholder="Buscar producto o código…" value="${esc(FI.q)}" oninput="FI.q=this.value;tablaInv()">
@@ -1336,6 +1338,22 @@ function vInventario() {
   </div>
   <div class="tw"><table><thead><tr><th></th><th>Código</th><th>Producto</th><th>Categoría</th><th class="n">Stock</th><th class="n">Por aprobar</th><th class="n">Mín.</th><th class="n">Costo</th><th class="n">Precio</th><th class="n">Margen</th><th class="n">Rotación 30d</th></tr></thead><tbody id="tbInv"></tbody></table></div>`;
   tablaInv();
+}
+// Rentabilidad promedio PONDERADA (pesa más lo que más plata representa). Productos/líneas sin costo se excluyen: inflarían el margen.
+function rentInventario() {
+  const ps = productos().filter(p => p.stock > 0 && p.precio > 0), ok = ps.filter(p => p.costo > 0);
+  const venta = sum(ok, p => p.stock * p.precio), costo = sum(ok, p => p.stock * p.costo), gan = venta - costo;
+  return { venta, costo, gan, margen: venta ? gan / venta * 100 : null, markup: costo ? gan / costo * 100 : null, sinCosto: ps.length - ok.length };
+}
+function rentVentas(dias) {
+  const lim = addDays(TODAY(), -dias); let venta = 0, costo = 0, sinCosto = 0;
+  pedidos().filter(o => VALIDOS.includes(o.estado) && o.fecha >= lim).forEach(o => lineasDe(o).forEach(l => {
+    const c = l.costo != null ? l.costo : (P(l.pid) ? P(l.pid).costo : 0);
+    if (!(c > 0)) { sinCosto++; return; }
+    venta += l.cant * l.precio * (1 - (o.desc || 0) / 100); costo += l.cant * c;
+  }));
+  const gan = venta - costo;
+  return { venta, costo, gan, margen: venta ? gan / venta * 100 : null, markup: costo ? gan / costo * 100 : null, sinCosto };
 }
 function tablaInv() {
   const q = FI.q.toLowerCase().trim(), lim = addDays(TODAY(), -30), rot = {}, comp = {};
