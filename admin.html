@@ -952,12 +952,101 @@ async function facturar() {
   toast('✅ Facturado FV-' + pad(n, 6));
 }
 
+/* ---------- NUEVA VENTA DESDE ADMINISTRACIÓN ----------
+   Se monta igual que un pedido del vendedor (se le carga al vendedor que escojas) y se puede facturar de una vez
+   (mismo proceso de facturar: descuenta stock, genera FV-…, vence según el crédito del cliente) o dejar en "Por aprobar". */
+let NV = null;
+function nuevaVenta() {
+  NV = { cid: '', vid: '', lineas: [], desc: 0, pago: 'contado', nota: '' };
+  openModal('Nueva venta', `
+    <div class="fg">
+      <label>Cliente<input id="nvCli" list="dlCliNV" placeholder="Nombre del negocio…" onchange="nvCliente()"><datalist id="dlCliNV">${clientes().map(c => `<option value="${esc(c.nombre + ' · ' + c.municipio)}">`).join('')}</datalist></label>
+      <label>Vendedor (a quién se le carga)<select id="nvVen" onchange="NV.vid=this.value">${vendedores().filter(v => v.activo !== false).map(v => `<option value="${v.id}">${esc(v.nombre)}</option>`).join('')}</select></label>
+    </div>
+    <div class="small mut" style="margin-top:4px">¿El cliente no existe? Créalo primero en <b>Clientes</b> (el teléfono es opcional).</div>
+    <div id="nvCliInfo"></div>
+    <div class="row" style="margin-top:12px;align-items:flex-end;flex-wrap:wrap">
+      <label class="f grow" style="min-width:200px">Producto<input id="nvProd" list="dlProdNV" placeholder="Nombre o código…" onchange="nvProdSel()"></label>
+      <label class="f" style="width:90px">Cantidad<input id="nvCant" type="number" min="1" inputmode="numeric" value="1"></label>
+      <label class="f" style="width:120px">En<select id="nvUni"><option value="1">unidades</option></select></label>
+      <button class="btn acc" onclick="nvAdd()">Agregar</button>
+    </div>
+    <datalist id="dlProdNV">${productos().map(p => `<option value="${esc(p.sku + ' · ' + p.nombre)}">${factorDe(p) > 1 ? fmt(precioPres(p)) + '/' + presDe(p).ab : fmt(p.precio)} · disp. ${fmtCant(p, p.stock)}</option>`).join('')}</datalist>
+    <div id="nvBody" style="margin-top:12px"></div>`, true);
+  $('nvProd').addEventListener('keydown', e => { if (e.key === 'Enter') { nvProdSel(); nvAdd(); } });
+  $('nvCant').addEventListener('keydown', e => { if (e.key === 'Enter') nvAdd(); });
+  NV.vid = $('nvVen').value; nvRender();
+}
+function nvCliente() {
+  const v = $('nvCli').value.trim(), c = clientes().find(x => x.nombre + ' · ' + x.municipio === v) || clientes().find(x => x.nombre.toLowerCase() === v.toLowerCase());
+  const cambio = (c ? c.id : '') !== NV.cid;   // solo al cambiar de cliente se proponen su vendedor y su forma de pago
+  NV.cid = c ? c.id : '';
+  if (c && cambio) { if (c.vendedorId && V(c.vendedorId) && V(c.vendedorId).activo !== false) { $('nvVen').value = c.vendedorId; NV.vid = c.vendedorId; } NV.pago = c.plazo ? 'credito' : 'contado'; }
+  nvRender();
+}
+function nvProdSel() {
+  const p = pFind($('nvProd').value.trim()); if (!p) return;
+  const { f, nom } = presDe(p);
+  $('nvUni').innerHTML = f > 1 ? `<option value="${f}">${nom.toLowerCase()} (x${f})</option>${p.suelto ? '<option value="1">unidades sueltas</option>' : ''}<option value="1">unidades</option>` : '<option value="1">unidades</option>';
+  $('nvCant').focus(); $('nvCant').select();
+}
+function nvAdd() {
+  const p = pFind($('nvProd').value.trim()), q = parseInt($('nvCant').value, 10), mult = +$('nvUni').value || 1;
+  if (!p) return toast('Selecciona un producto de la lista');
+  if (!(q > 0)) return toast('Escribe la cantidad');
+  const cant = q * mult, ya = NV.lineas.find(l => l.pid === p.id);
+  if (ya) ya.cant += cant; else NV.lineas.push({ pid: p.id, cant });
+  $('nvProd').value = ''; $('nvCant').value = 1; $('nvUni').innerHTML = '<option value="1">unidades</option>'; $('nvProd').focus(); nvRender();
+}
+const nvLineas = () => NV.lineas.filter(l => P(l.pid) && l.cant > 0).map(l => ({ pid: l.pid, cant: l.cant, precio: precioPara(P(l.pid), l.cant) }));
+function nvRender() {
+  const c = NV.cid ? C(NV.cid) : null, ls = nvLineas(), bruto = sum(ls, l => l.cant * l.precio), total = calcTotal(ls, NV.desc);
+  const saldo = c ? saldoCliente(c.id) : 0, venc = c ? vencidasCliente(c.id) : [];
+  $('nvCliInfo').innerHTML = c ? `<div class="row" style="margin-top:8px;gap:6px"><span class="b ${c.plazo ? 'info' : 'mut'}">${c.plazo ? 'Crédito ' + c.plazo + ' días · cupo ' + fmt(c.cupo) : 'Contado'}</span>${saldo ? `<span class="b warn">Debe ${fmt(saldo)}</span>` : ''}${venc.length ? `<span class="b bad">${venc.length} facturas vencidas</span>` : ''}<span class="small mut">${esc(c.barrio)}, ${esc(c.municipio)}</span></div>` : '';
+  const faltan = ls.filter(l => l.cant > P(l.pid).stock);
+  $('nvBody').innerHTML = `<div class="tw"><table><thead><tr><th>Producto</th><th class="n">Cantidad (und)</th><th class="n">Stock</th><th class="n">Precio</th><th class="n">Subtotal</th><th></th></tr></thead><tbody>
+    ${ls.map((l, i) => { const p = P(l.pid); return `<tr><td style="white-space:normal">${esc(p.nombre)}<div class="small mut">${esc(p.sku)}</div></td>
+      <td class="n"><input type="number" min="1" value="${l.cant}" style="width:76px;text-align:right" onchange="NV.lineas[${i}].cant=Math.max(1,parseInt(this.value,10)||1);setTimeout(nvRender)">${factorDe(p) > 1 ? `<div class="small mut">= ${fmtCant(p, l.cant)}</div>` : ''}</td>
+      <td class="n"><span class="b ${p.stock >= l.cant ? 'ok' : p.stock ? 'warn' : 'bad'}">${fmtCant(p, p.stock)}</span></td><td class="n">${precioDoc(p, l)}${l.precio < p.precio ? '<div class="small" style="color:var(--ok)">x volumen</div>' : ''}</td><td class="n">${fmt(l.cant * l.precio)}</td><td><button class="btn sm sec" onclick="NV.lineas.splice(${i},1);nvRender()">✕</button></td></tr>`; }).join('') || '<tr><td colspan="6" class="mut">Agrega los productos de la venta.</td></tr>'}
+    </tbody></table></div>
+    <div class="fg" style="margin-top:10px">
+      <label>Descuento (%)<input id="nvDesc" type="number" min="0" max="50" value="${NV.desc || ''}" placeholder="0" oninput="NV.desc=Math.max(0,Math.min(50,+this.value||0));nvTot()"></label>
+      <label>Forma de pago<select onchange="NV.pago=this.value;setTimeout(nvRender)"><option value="contado" ${NV.pago === 'contado' ? 'selected' : ''}>Contado</option>${c && c.plazo ? `<option value="credito" ${NV.pago === 'credito' ? 'selected' : ''}>Crédito ${c.plazo} días</option>` : ''}</select></label>
+      <label>Factura electrónica N° (opcional)<input id="nvExt" value="${esc(NV.ext || '')}" oninput="NV.ext=this.value" placeholder="Ej: FE-1234"></label>
+    </div>
+    <label class="f" style="margin-top:10px">Nota (opcional)<input id="nvNota" value="${esc(NV.nota)}" oninput="NV.nota=this.value" placeholder="Ej: entregar el sábado"></label>
+    ${faltan.length ? `<div class="alert bad">Stock insuficiente: ${faltan.map(l => esc(P(l.pid).nombre) + ' (hay ' + fmtCant(P(l.pid), P(l.pid).stock) + ')').join(', ')}. Para facturar ya, baja esas cantidades; si no, guárdalo como pedido.</div>` : ''}
+    ${NV.pago === 'credito' && venc.length ? '<div class="alert bad">El cliente tiene cartera vencida. Considera venderle de contado.</div>' : ''}
+    ${NV.pago === 'credito' && c && saldo + total > c.cupo ? `<div class="alert warn">Con esta venta el saldo quedaría en ${fmt(saldo + total)} y el cupo es ${fmt(c.cupo)}.</div>` : ''}
+    <div id="nvTot" style="margin-top:8px"></div>
+    <div class="mfoot" style="flex-wrap:wrap;gap:6px"><button class="btn sec" onclick="closeModal()">Cancelar</button><button class="btn sec" onclick="nvGuardar(false)">Guardar como pedido (por aprobar)</button><button class="btn ok" id="btnFac" onclick="nvGuardar(true)">✓ Facturar ya</button></div>`;
+  nvTot();
+}
+function nvTot() {
+  const ls = nvLineas(), bruto = sum(ls, l => l.cant * l.precio), total = calcTotal(ls, NV.desc), R = (k, v, b) => `<div class="tot${b ? ' big' : ''}" style="max-width:320px;margin-left:auto"><span>${k}</span><span>${v}</span></div>`;
+  if ($('nvTot')) $('nvTot').innerHTML = R('Subtotal', fmt(bruto)) + (NV.desc ? R('Descuento ' + NV.desc + '%', '−' + fmt(bruto - total)) : '') + R('Total', fmt(total), 1);
+}
+async function nvGuardar(facturarYa) {
+  const c = NV.cid ? C(NV.cid) : null, ls = nvLineas(), vid = $('nvVen').value;
+  if (!c) return toast('Escoge el cliente de la lista');
+  if (!vid) return toast('Escoge el vendedor');
+  if (!ls.length) return toast('Agrega al menos un producto');
+  if (facturarYa) { const req = {}; ls.forEach(l => req[l.pid] = (req[l.pid] || 0) + l.cant); for (const pid in req) if (req[pid] > P(pid).stock) return toast('Stock insuficiente de ' + P(pid).nombre); }
+  const id = 'OF-' + Date.now().toString(36).toUpperCase(), ext = $('nvExt') ? $('nvExt').value.trim() : '';
+  const o = { id, num: id, fecha: TODAY(), ts: Date.now(), clienteId: c.id, vendedorId: vid, lineas: ls, desc: NV.desc || 0, total: calcTotal(ls, NV.desc), pago: NV.pago === 'credito' && c.plazo ? 'credito' : 'contado', estado: 'por_aprobar', nota: (NV.nota || '').trim(), origen: 'oficina' };
+  guardar({ ['pedidos/' + id]: o });
+  if (!facturarYa) { closeModal(); render(); return toast('📥 Pedido guardado en "Por aprobar"'); }
+  REV = { id, lineas: ls.map(l => ({ ...l, pedido: l.cant })), desc: o.desc, pago: o.pago, externa: ext, rechazo: false };
+  await facturar();
+  if (PED(id).estado === 'por_aprobar') toast('No se pudo facturar ahora: quedó en "Por aprobar"');
+}
+
 /* ---------- FACTURAS Y DESPACHOS ---------- */
 const FP = { est: 'facturado', q: '', ven: '' };
 function vPedidos() {
   const cnt = k => pedidos().filter(o => o.estado === k).length;
   $('app').innerHTML = `
-  <h2>Facturas y despachos</h2>
+  <div class="row between"><h2>Facturas y despachos</h2><button class="btn acc" onclick="nuevaVenta()">+ Nueva venta</button></div>
   <div class="tabs2">${[['facturado', 'Por despachar'], ['despachado', 'En ruta'], ['entregado', 'Entregados'], ['rechazado', 'Rechazados'], ['anulado', 'Anulados'], ['todos', 'Todos']].map(([k, t]) => `<button class="${FP.est === k ? 'on' : ''}" onclick="FP.est='${k}';vPedidos()">${t} (${k === 'todos' ? pedidos().length : cnt(k)})</button>`).join('')}</div>
   ${FP.est === 'facturado' && pedidos().some(o => o.estado === 'facturado') ? `<div class="alert info row between" style="margin-top:0"><span>🧺 Arma la lista de alistamiento y la planilla de cargue de lo que hay por despachar.</span><button class="btn sm acc" onclick="alistamiento()">Alistamiento y cargue</button></div>` : ''}
   <div class="row" style="margin-bottom:10px"><input class="grow" placeholder="Buscar cliente, factura o pedido…" value="${esc(FP.q)}" oninput="FP.q=this.value;tablaPedidos()">
