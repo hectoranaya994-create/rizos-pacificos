@@ -1040,7 +1040,7 @@ function formCliente(pr) {
       <label>Nombre del negocio<input id="fcNom" value="${esc(d.nombre)}"></label>
       <label>Tipo<select id="fcTipo">${TIPOS_CLIENTE.map(t => `<option ${d.tipo === t ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
       <label>Persona de contacto<input id="fcCon" value="${esc(d.contacto)}"></label>
-      <label>Celular / WhatsApp<input id="fcTel" inputmode="numeric" value="${esc(d.tel)}"></label>
+      <label>Celular / WhatsApp <span class="small mut">(opcional)</span><input id="fcTel" inputmode="numeric" value="${esc(d.tel)}"></label>
       <label>Municipio<select id="fcMun">${MUNICIPIOS.map(m => `<option ${d.municipio === m ? 'selected' : ''}>${m}</option>`).join('')}</select></label>
       <label>Barrio / dirección<input id="fcBar"></label>
     </div>
@@ -1054,7 +1054,7 @@ function fcError(m) { const e = $('fcErr'); if (e) { e.textContent = m; e.style.
 function guardarCliente(prId) {
   const d = { nombre: $('fcNom').value.trim(), tipo: $('fcTipo').value, contacto: $('fcCon').value.trim(), tel: $('fcTel').value.replace(/\D/g, ''), municipio: $('fcMun').value, barrio: $('fcBar').value.trim() || 'Centro' };
   if (!d.nombre) return fcError('Escribe el nombre del negocio');
-  if (d.tel.length !== 10) return fcError('El celular debe tener 10 dígitos');
+  if (d.tel && d.tel.length !== 10) return fcError('El celular debe tener 10 dígitos (o déjalo vacío)');
   d.dias = [...document.querySelectorAll('.fcDia:checked')].map(x => +x.value);
   if (!d.dias.length) return fcError('Marca al menos un día de visita');
   const id = uid('C'), upd = { ['clientes/' + id]: { id, ...d, vendedorId: VID, plazo: 0, cupo: 0, creado: TODAY(), creadoPor: VID } };
