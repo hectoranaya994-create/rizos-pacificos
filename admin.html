@@ -879,10 +879,21 @@ function revisar(id) {
   REV = { id, lineas: lineasDe(o).map(l => { const cant = Math.min(l.cant, P(l.pid) ? P(l.pid).stock : 0); return { ...l, pedido: l.cant, cant, precio: cant === l.cant ? l.precio : precioPara(P(l.pid), cant) }; }), desc: o.desc || 0, pago: o.pago, externa: '', rechazo: false };
   revRender();
 }
+// Rentabilidad de un pedido (con el descuento aplicado) contra el costo actual de cada producto
+function rentPedido(lineas, desc) {
+  const k = 1 - (desc || 0) / 100; let venta = 0, costo = 0, sinCosto = 0;
+  const porLinea = lineas.map(l => { const p = P(l.pid), c = p ? p.costo : 0, v = l.cant * l.precio * k;
+    if (!(c > 0) || !l.cant) { if (l.cant) sinCosto++; return null; }
+    venta += v; costo += l.cant * c; return (v - l.cant * c) / v * 100; });
+  const gan = venta - costo;
+  return { venta, costo, gan, margen: venta ? gan / venta * 100 : null, sinCosto, porLinea };
+}
+const colMargen = m => m == null ? 'var(--mut)' : m < 0 ? 'var(--bad)' : m < 10 ? 'var(--warn)' : 'var(--ok)';
+const kpiRentPed = (r, pad) => `<div class="kpi" style="padding:${pad || 10}px" title="Precio de venta (con descuento) contra el costo actual de cada producto"><div class="l">Rentabilidad del pedido</div><div class="v" style="font-size:15px;color:${colMargen(r.margen)}">${r.margen != null ? r.margen.toFixed(1) + '%' : '—'}</div><div class="s">${r.margen != null ? 'Ganancia ' + fmt(r.gan) : 'Sin costos cargados'}${r.sinCosto ? ` · <span style="color:var(--bad)">${r.sinCosto} sin costo</span>` : ''}</div></div>`;
 function revRender() {
   const o = PED(REV.id), c = C(o.clienteId), T = TODAY();
   const bruto = sum(REV.lineas, l => l.cant * l.precio), total = calcTotal(REV.lineas, REV.desc);
-  const saldo = saldoCliente(c.id), venc = vencidasCliente(c.id);
+  const saldo = saldoCliente(c.id), venc = vencidasCliente(c.id), RP = rentPedido(REV.lineas, REV.desc);
   openModal('Revisar pedido · ' + c.nombre, `
     <div class="row" style="margin-bottom:10px">${bEstado(o.estado)}<span class="small mut">${numPedido(o)} · ${esc(V(o.vendedorId).nombre)} · ${fFecha(o.fecha)} ${fHora(o.ts)}</span></div>
     <div class="kpis" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px">
@@ -890,10 +901,11 @@ function revRender() {
       <div class="kpi" style="padding:10px"><div class="l">Saldo actual</div><div class="v" style="font-size:15px">${fmt(saldo)}</div><div class="s">Disponible ${fmt(Math.max(0, (c.cupo || 0) - saldo))}</div></div>
       <div class="kpi" style="padding:10px"><div class="l">Vencido</div><div class="v" style="font-size:15px;color:${venc.length ? 'var(--bad)' : 'var(--ok)'}">${fmt(sum(venc, saldoPedido))}</div><div class="s">${venc.length} facturas</div></div>
       <div class="kpi" style="padding:10px"><div class="l">Compras 90 días</div><div class="v" style="font-size:15px">${fmt(compras90(c.id))}</div><div class="s">${estadoCliente(c).t}</div></div>
+      ${kpiRentPed(RP)}
     </div>
     ${o.nota ? `<div class="alert info">📝 Nota del vendedor: ${esc(o.nota)}</div>` : ''}
-    <div class="tw rev"><table><thead><tr><th>Producto</th><th class="n">Pedido</th><th class="n">Stock</th><th class="n">A facturar</th><th class="n">Precio</th><th class="n">Subtotal</th></tr></thead><tbody>
-      ${REV.lineas.map((l, i) => { const p = P(l.pid); return `<tr><td style="white-space:normal">${esc(p.nombre)}<div class="small mut">${esc(p.sku)}</div></td><td class="n">${fmtCant(p, l.pedido)}</td><td class="n"><span class="b ${p.stock >= l.pedido ? 'ok' : p.stock ? 'warn' : 'bad'}">${fmtCant(p, p.stock)}</span></td><td class="n"><input type="number" min="0" max="${p.stock}" value="${l.cant}" onchange="revCant(${i},this.value)">${factorDe(p) > 1 ? `<div class="small mut">und = ${fmtCant(p, l.cant)}</div>` : ''}</td><td class="n">${precioDoc(p, l)}${l.precio < p.precio ? '<div class="small" style="color:var(--ok)">x volumen</div>' : ''}</td><td class="n">${fmt(l.cant * l.precio)}</td></tr>`; }).join('')}
+    <div class="tw rev"><table><thead><tr><th>Producto</th><th class="n">Pedido</th><th class="n">Stock</th><th class="n">A facturar</th><th class="n">Precio</th><th class="n">Subtotal</th><th class="n">Margen</th></tr></thead><tbody>
+      ${REV.lineas.map((l, i) => { const p = P(l.pid), mg = RP.porLinea[i]; return `<tr><td style="white-space:normal">${esc(p.nombre)}<div class="small mut">${esc(p.sku)}</div></td><td class="n">${fmtCant(p, l.pedido)}</td><td class="n"><span class="b ${p.stock >= l.pedido ? 'ok' : p.stock ? 'warn' : 'bad'}">${fmtCant(p, p.stock)}</span></td><td class="n"><input type="number" min="0" max="${p.stock}" value="${l.cant}" onchange="revCant(${i},this.value)">${factorDe(p) > 1 ? `<div class="small mut">und = ${fmtCant(p, l.cant)}</div>` : ''}</td><td class="n">${precioDoc(p, l)}${l.precio < p.precio ? '<div class="small" style="color:var(--ok)">x volumen</div>' : ''}</td><td class="n">${fmt(l.cant * l.precio)}</td><td class="n" style="font-weight:700;color:${colMargen(mg)}">${l.cant ? (mg != null ? mg.toFixed(0) + '%' : '<span class="small" style="color:var(--bad);font-weight:400">sin costo</span>') : '—'}</td></tr>`; }).join('')}
     </tbody></table></div>
     <div class="row" style="margin-top:12px;align-items:flex-start;justify-content:space-between">
       <div class="fg" style="flex:1 1 300px">
@@ -1024,7 +1036,8 @@ function nvRender() {
 }
 function nvTot() {
   const ls = nvLineas(), bruto = sum(ls, l => l.cant * l.precio), total = calcTotal(ls, NV.desc), R = (k, v, b) => `<div class="tot${b ? ' big' : ''}" style="max-width:320px;margin-left:auto"><span>${k}</span><span>${v}</span></div>`;
-  if ($('nvTot')) $('nvTot').innerHTML = R('Subtotal', fmt(bruto)) + (NV.desc ? R('Descuento ' + NV.desc + '%', '−' + fmt(bruto - total)) : '') + R('Total', fmt(total), 1);
+  const rp = rentPedido(ls, NV.desc);
+  if ($('nvTot')) $('nvTot').innerHTML = `<div class="row" style="align-items:flex-start;justify-content:space-between;gap:12px"><div style="flex:0 1 240px">${ls.length ? kpiRentPed(rp, 8) : ''}</div><div style="flex:0 1 320px">` + R('Subtotal', fmt(bruto)) + (NV.desc ? R('Descuento ' + NV.desc + '%', '−' + fmt(bruto - total)) : '') + R('Total', fmt(total), 1) + '</div></div>';
 }
 async function nvGuardar(facturarYa) {
   const c = NV.cid ? C(NV.cid) : null, ls = nvLineas(), vid = $('nvVen').value;
@@ -1140,7 +1153,7 @@ function verPedido(id, recienFacturado, recienDespachado) {
       ${!['anulado', 'rechazado', 'por_aprobar'].includes(o.estado) ? `<button class="btn bad" onclick="estado('${o.id}','anulado')">Anular</button>` : ''}
       ${o.factura && o.estado !== 'anulado' ? `<button class="btn sec" onclick="imprimirVenta('${o.id}')">🖨 Documento de venta</button><button class="btn sec" onclick="imprimir('${o.id}')">🖨 Remisión</button>` : ''}
       ${saldo ? `<button class="btn acc" onclick="formAbono('${o.id}')">Registrar abono</button>` : ''}
-      <a class="btn wa" target="_blank" href="${waLink(c.tel, textoPedido(o))}">WhatsApp al cliente</a>
+      ${c.tel ? `<a class="btn wa" target="_blank" href="${waLink(c.tel, textoPedido(o))}">WhatsApp al cliente</a>` : ''}
       ${o.estado === 'facturado' ? `<button class="btn acc" onclick="estado('${o.id}','despachado')">Marcar despachado</button>` : ''}
       ${o.estado === 'despachado' ? `<button class="btn ok" onclick="estado('${o.id}','entregado')">Marcar entregado</button>` : ''}
     </div>`, true);
