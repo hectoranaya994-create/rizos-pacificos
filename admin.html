@@ -469,8 +469,17 @@ function presDe(p) {
 const fmtCant = (p, n) => { const { f, ab } = presDe(p); n = +n || 0; if (f === 1) return n + ' und'; const q = Math.floor(n / f), r = n % f; return [q ? q + ' ' + ab : '', r ? r + ' und' : ''].filter(Boolean).join(' + ') || '0 ' + ab; };
 const precioPres = p => Math.round((p ? p.precio : 0) * factorDe(p));   // precio de la docena/caja
 // Precio por unidad para una cantidad: escalas por volumen y, si hay unidades sueltas, esas van a su precio aparte (promedio por unidad).
-function precioPara(p, cant) {
-  let pr = p ? p.precio : 0; escalasDe(p).forEach(e => { if (cant >= e.desde) pr = e.precio; });
+// GRUPO DE PRECIO POR VOLUMEN: referencias con el mismo p.grupoEsc suman sus cantidades del pedido para alcanzar la escala.
+// ctx = { pid: cantidad } de todo el pedido (sin ctx se usa solo la cantidad de la línea).
+const grupoDe = p => String((p && p.grupoEsc) || '').trim().toUpperCase();
+function cantEscala(p, cant, ctx) {
+  const g = grupoDe(p); if (!g || !ctx) return cant;
+  let t = 0; for (const pid in ctx) { const q = P(pid); if (q && grupoDe(q) === g) t += +ctx[pid] || 0; }
+  return Math.max(t, cant);
+}
+function precioPara(p, cant, ctx) {
+  const ce = cantEscala(p, cant, ctx);
+  let pr = p ? p.precio : 0; escalasDe(p).forEach(e => { if (ce >= e.desde) pr = e.precio; });
   const f = factorDe(p), r = f > 1 ? cant % f : 0;
   if (r && p.suelto && +p.precioSuelto > 0) pr = Math.round(((cant - r) * pr + r * p.precioSuelto) / cant * 100) / 100;
   return pr;
@@ -484,7 +493,7 @@ function lineaTxt(p, l) {
 const precioDoc = (p, l) => factorDe(p) > 1 && l.cant % factorDe(p) === 0 ? `${fmt(l.precio * factorDe(p))}<span style="font-size:.8em;opacity:.7">/${presDe(p).ab}</span>` : fmt(l.precio);
 const escalasTxt = p => { const { f, ab } = presDe(p); return escalasDe(p).map(e => f > 1 && e.desde % f === 0 ? `${e.desde / f}+ ${ab} ${fmt(e.precio * f)}` : `${e.desde}+ und ${fmt(e.precio)}`).join(' · '); };
 
-const sigEscala = (p, cant) => escalasDe(p).find(e => e.desde > cant);
+const sigEscala = (p, cant, ctx) => escalasDe(p).find(e => e.desde > cantEscala(p, cant, ctx));
 function saldoPedido(o) { if (o.pago !== 'credito' || !VALIDOS.includes(o.estado)) return 0; return Math.max(0, o.total - pagado(o)); }
 const pedidosCliente = cid => pedidos().filter(o => o.clienteId === cid && VALIDOS.includes(o.estado));
 const saldoCliente = cid => sum(pedidos().filter(o => o.clienteId === cid), saldoPedido);
@@ -876,7 +885,7 @@ let REV = null;
 function revisar(id) {
   const o = PED(id);
   if (!o || o.estado !== 'por_aprobar') { toast('Este pedido ya no está por aprobar'); return render(); }
-  REV = { id, lineas: lineasDe(o).map(l => { const cant = Math.min(l.cant, P(l.pid) ? P(l.pid).stock : 0); return { ...l, pedido: l.cant, cant, precio: cant === l.cant ? l.precio : precioPara(P(l.pid), cant) }; }), desc: o.desc || 0, pago: o.pago, externa: '', rechazo: false };
+  REV = { id, lineas: lineasDe(o).map(l => { const cant = Math.min(l.cant, P(l.pid) ? P(l.pid).stock : 0); return { ...l, pedido: l.cant, cant, precio: cant === l.cant ? l.precio : precioPara(P(l.pid), cant, Object.fromEntries(lineasDe(o).map(x => [x.pid, Math.min(x.cant, P(x.pid) ? P(x.pid).stock : 0)]))) }; }), desc: o.desc || 0, pago: o.pago, externa: '', rechazo: false };
   revRender();
 }
 // Rentabilidad de un pedido (con el descuento aplicado) contra el costo actual de cada producto
@@ -927,10 +936,14 @@ function revRender() {
     : `<div class="mfoot"><button class="btn bad" onclick="REV.rechazo=true;revRender()">Rechazar</button><button class="btn ok" id="btnFac" onclick="facturar()">✓ Aprobar y facturar</button></div>`}`, true);
   if (REV.rechazo) setTimeout(() => $('revMot') && $('revMot').focus(), 50);
 }
+const revCtx = () => { const X = {}; REV.lineas.forEach(l => X[l.pid] = (X[l.pid] || 0) + l.cant); return X; };
 function revCant(i, v) {
   const l = REV.lineas[i], st = P(l.pid).stock; let n = Math.max(0, parseInt(v, 10) || 0);
   if (n > st) { toast('Stock disponible: ' + st); n = st; }
-  l.cant = n; l.precio = n === l.pedido ? lineasDe(PED(REV.id))[i].precio : precioPara(P(l.pid), n);
+  l.cant = n; l.precio = n === l.pedido ? lineasDe(PED(REV.id))[i].precio : precioPara(P(l.pid), n, revCtx());
+  const g = grupoDe(P(l.pid));   // grupo de volumen: al cambiar una referencia se recalculan las demás del grupo
+  if (g) { const orig = lineasDe(PED(REV.id)), igual = REV.lineas.every(m => grupoDe(P(m.pid)) !== g || m.cant === m.pedido);
+    REV.lineas.forEach((m, j) => { if (grupoDe(P(m.pid)) === g) m.precio = igual ? orig[j].precio : precioPara(P(m.pid), m.cant, revCtx()); }); }
   REV.externa = $('revExt').value; revRender();
 }
 function rechazar() {
@@ -1010,7 +1023,7 @@ function nvAdd() {
   if (ya) ya.cant += cant; else NV.lineas.push({ pid: p.id, cant });
   $('nvProd').value = ''; $('nvCant').value = 1; $('nvUni').innerHTML = '<option value="1">unidades</option>'; $('nvProd').focus(); nvRender();
 }
-const nvLineas = () => NV.lineas.filter(l => P(l.pid) && l.cant > 0).map(l => ({ pid: l.pid, cant: l.cant, precio: precioPara(P(l.pid), l.cant) }));
+const nvLineas = () => { const X = {}; NV.lineas.forEach(l => X[l.pid] = (X[l.pid] || 0) + l.cant); return NV.lineas.filter(l => P(l.pid) && l.cant > 0).map(l => ({ pid: l.pid, cant: l.cant, precio: precioPara(P(l.pid), l.cant, X) })); };
 function nvRender() {
   const c = NV.cid ? C(NV.cid) : null, ls = nvLineas(), bruto = sum(ls, l => l.cant * l.precio), total = calcTotal(ls, NV.desc);
   const saldo = c ? saldoCliente(c.id) : 0, venc = c ? vencidasCliente(c.id) : [];
@@ -1488,6 +1501,8 @@ function formProducto(pid) {
     <div class="small mut" style="margin-bottom:6px">Si el cliente pide desde esa cantidad de este producto, se cobra ese precio por unidad.</div>
     ${[0, 1, 2].map(i => { const e = escalasDe(p)[i] || {}; return `<div class="fg" style="margin-top:6px"><label>Desde (unidades)<input class="fpEsD" type="number" min="2" value="${e.desde || ''}" placeholder="Ej: ${[12, 24, 48][i]}" oninput="margenPrev()"></label><label>Precio por unidad<input class="fpEsP" type="number" min="0" value="${e.precio || ''}" oninput="margenPrev()"></label></div>`; }).join('')}
     <div class="small mut" id="esPrev" style="margin-top:6px"></div>
+    <label class="f" style="margin-top:10px">🔗 Grupo de precio por volumen <span class="small mut">(opcional)</span><input id="fpGrp" list="dlGrp" value="${esc(p.grupoEsc || '')}" placeholder="Ej: SEDAL SOBRE"><datalist id="dlGrp">${[...new Set(productos().map(grupoDe).filter(Boolean))].map(g => `<option value="${esc(g)}">`).join('')}</datalist></label>
+    <div class="small mut" style="margin-top:4px">Las referencias con el mismo grupo (ej. sabores o colores del mismo producto) <b>suman sus cantidades</b> en el pedido para alcanzar los precios por cantidad.</div>
     ${pid ? '<div class="small mut" style="margin-top:4px">El stock cambia con facturas, anulaciones y entradas de mercancía.</div>' : ''}
     <div class="mfoot"><button class="btn sec" onclick="closeModal()">Cancelar</button><button class="btn" onclick="guardarProducto('${pid || ''}')">Guardar</button></div>`);
   FP_F = factorDe(p); presUI();
@@ -1556,10 +1571,17 @@ function guardarProducto(pid) {
   }
   if (es.some(e => e.precio < d.costo) && !confirm('Alguna escala queda por debajo del costo. ¿Guardar igual?')) return;
   d.escalas = es.length ? es : null;
+  d.grupoEsc = $('fpGrp').value.trim().toUpperCase().replace(/\s+/g, ' ') || null;
+  const otrosGrp = d.grupoEsc ? productos().filter(x => x.id !== pid && grupoDe(x) === d.grupoEsc) : [];
+  const conEsc = otrosGrp.find(x => escalasDe(x).length);   // entra a un grupo que ya tiene precios por cantidad y este no tiene
+  if (!d.escalas && conEsc && confirm(`El grupo ${d.grupoEsc} tiene precios por cantidad (${escalasTxt(conEsc)}). ¿Usarlos también en este producto?`)) d.escalas = escalasDe(conEsc).map(e => ({ desde: e.desde, precio: e.precio }));
   const upd = {};
   if (pid) for (const k in d) upd[`productos/${pid}/${k}`] = d[k];
   else { const id = uid('P'); upd['productos/' + id] = { id, ...d, stock: Math.max(0, +$('fpSto').value || 0) }; }
-  guardar(upd); closeModal(); render(); toast('Producto guardado');
+  // mismas escalas para todas las referencias del grupo (normalmente comparten precio)
+  const distintas = otrosGrp.filter(x => JSON.stringify(escalasDe(x).map(e => [e.desde, e.precio])) !== JSON.stringify((d.escalas || []).map(e => [e.desde, e.precio])));
+  if (d.escalas && distintas.length && confirm(`¿Poner estos mismos precios por cantidad a las otras ${distintas.length} referencias del grupo ${d.grupoEsc}?\n\n${distintas.map(x => '• ' + x.nombre).join('\n')}`)) distintas.forEach(x => upd[`productos/${x.id}/escalas`] = d.escalas);
+  guardar(upd); closeModal(); render(); toast('Producto guardado' + (d.grupoEsc ? ' · grupo ' + d.grupoEsc : ''));
 }
 /* ---------- IMPORTAR PRODUCTOS (copiar y pegar desde Excel) ---------- */
 // Encabezados reconocidos (en cualquier orden): Código, Producto, Categoría, Costo, Precio, Stock inicial, Stock mínimo,
