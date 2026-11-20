@@ -135,6 +135,19 @@ td.n,th.n{text-align:right}
 .ph.con{background-color:#fff}
 .btnfile{position:relative;overflow:hidden}
 .btnfile input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;padding:0}
+.tiles{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.tile{border:1px solid var(--line);background:var(--card);border-radius:18px;padding:18px 10px 16px;display:flex;flex-direction:column;align-items:center;gap:6px;color:var(--txt);box-shadow:0 2px 8px rgba(42,33,39,.06);min-height:150px;justify-content:center}
+.tile:active{transform:scale(.97)}
+.tile .ti{width:64px;height:64px;border-radius:18px;display:grid;place-items:center;font-size:34px;margin-bottom:4px}
+.tile b{font-size:16px}
+.tile .ts{font-size:12px;color:var(--mut)}
+.tile.dest{border:2px solid var(--pri)}
+.volver{border:0;background:none;color:var(--pri);font-weight:700;font-size:15px;padding:4px 0;margin-bottom:2px}
+.acciones{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
+.acciones button{border:1px solid var(--line);background:var(--card);border-radius:14px;padding:16px 12px;display:flex;flex-direction:column;align-items:flex-start;gap:4px;text-align:left;min-height:96px;color:var(--txt);font-size:15px}
+.acciones button .ic{font-size:26px;line-height:1;margin-bottom:4px}
+.acciones button.acc-g{grid-column:1/-1;background:var(--pri);color:#fff;border-color:var(--pri);flex-direction:row;align-items:center;gap:12px;min-height:72px;font-size:18px}
+.acciones button.acc-g .ic{margin:0}
 </style>
 <style>
 main{max-width:760px;padding-bottom:96px}
@@ -178,11 +191,11 @@ header.top{flex-wrap:nowrap}
 <main id="app"></main>
 <div class="cartbar" id="cartbar" style="display:none"></div>
 <nav class="bnav" id="bnav" style="display:none">
-  <button data-v="inicio" onclick="go('inicio')"><span class="ic">🏠</span>Hoy</button>
-  <button data-v="clientes" onclick="go('clientes')"><span class="ic">🏪</span>Clientes</button>
+  <button data-v="inicio" onclick="go('inicio')"><span class="ic">🏠</span>Inicio</button>
+  <button data-v="cobrar" onclick="go('cobrar')"><span class="ic">💵</span>Cobrar</button>
   <button data-v="pedido" class="mas" onclick="go('pedido')"><span class="ic">＋</span>Pedido</button>
   <button data-v="mis" onclick="go('mis')"><span class="ic">🧾</span>Mis pedidos<span class="bdg" id="bdgMis"></span></button>
-  <button data-v="auto" onclick="go('auto')"><span class="ic">📊</span>Autogestión</button>
+  <button data-v="clientes" onclick="go('clientes')"><span class="ic">🏪</span>Clientes</button>
 </nav>
 <div id="modal" class="modal hidden" onclick="if(event.target===this)avisoModal()">
   <div class="mbox" id="mbox"><div class="mhead"><h3 id="mTitle"></h3><button onclick="closeModal()">×</button></div><div class="mbody" id="mBody"></div></div>
@@ -226,7 +239,7 @@ const FIREBASE_CONFIG = {
   appId: "1:266793024970:web:09bbc82d5ba6cf10156333"
 };
 // DEMO = true → nodo y memoria local separados, se llena con datos de prueba. DEMO = false → producción.
-const DEMO = false;
+const DEMO = true;
 const RAIZ = DEMO ? 'distcap' : 'rizos';   // nodo raíz: 'distcap' = datos de prueba, 'rizos' = operación real
 const PFX = DEMO ? 'rp_demo_' : 'rp_';            // prefijo de memoria local (no mezclar demo y producción)
 if (DEMO) { document.title = '[DEMO] ' + document.title; document.addEventListener('DOMContentLoaded', () => document.body.insertAdjacentHTML('afterbegin', '<div style="background:#d9892b;color:#fff;text-align:center;font-weight:700;font-size:12px;padding:4px">MODO DEMO · datos de prueba, no es la operación real</div>')); }
@@ -808,10 +821,10 @@ function render() {
   vigilarCambios();
   $('hdNom').textContent = yo().nombre;
   $('hdSub').textContent = 'Ventas · ' + yo().zona;
-  document.querySelectorAll('#bnav button').forEach(b => b.classList.toggle('on', b.dataset.v === VIEW));
+  document.querySelectorAll('#bnav button').forEach(b => b.classList.toggle('on', b.dataset.v === VIEW || (b.dataset.v === 'inicio' && ['ruta', 'auto', 'prospectos', 'masv'].includes(VIEW))));
   const rech = misPedidos().filter(o => o.estado === 'rechazado' && !o.reenviadoEn && diasEntre(o.fecha, TODAY()) <= 7).length;
   $('bdgMis').textContent = rech || '';
-  ({ inicio: vInicio, clientes: vClientes, pedido: vPedido, mis: vMis, auto: vAuto, prospectos: vAuto })[VIEW]();
+  ({ inicio: vInicio, cobrar: vCobrar, ruta: vRuta, masv: vMasV, clientes: vClientes, pedido: vPedido, mis: vMis, auto: vAuto, prospectos: vAuto })[VIEW]();
 }
 
 /* ---------- LOGIN ---------- */
@@ -854,25 +867,63 @@ function vInicio() {
   const recientes = mp.slice().sort((a, b) => b.ts - a.ts).slice(0, 5);
   const caja = cajaPendiente(), liqs = vals(DB.liquidaciones).filter(l => l.vendedorId === VID).sort((a, b) => b.ts - a.ts).slice(0, 3);
   const itemRuta = c => { const v = visitaHoy(c.id), s = saldoCliente(c.id); return `<div class="it"><div class="x" onclick="ficha('${c.id}')" style="cursor:pointer"><b>${esc(c.nombre)}</b><span class="small mut">${esc(c.barrio)}, ${esc(c.municipio)}${s ? ` · <span style="color:${vencidasCliente(c.id).length ? 'var(--bad)' : 'var(--txt)'}">cobrar ${fmtK(s)}</span>` : ''}${v ? ' · ' + fHora(v.ts) : ''}</span></div>${v ? bRes(v.resultado) : `<button class="btn sm acc" onclick="llegue('${c.id}')">📍 Llegué</button>`}</div>`; };
+  const porCobrar = mc.filter(c => saldoCliente(c.id) > 0).length;
+  const tile = (ic, col, t, sub, js, dest) => `<button class="tile${dest ? ' dest' : ''}" onclick="${js}"><span class="ti" style="background:${col}">${ic}</span><b>${t}</b><span class="ts">${sub}</span></button>`;
+  const pendHoy = seg.filter(n => n.proximo <= T);
   $('app').innerHTML = `
-  <h2>Hola, ${esc(yo().nombre.split(' ')[0])} 👋</h2>
-  <div class="card"><div class="row between"><h3 style="margin:0">🗺️ Ruta de hoy · ${DIAS_L[dw]}</h3><span class="small"><b>${hechos}/${prog.length}</b> visitados · <b>${conPed}</b> con pedido</span></div>
-    <div class="list" style="margin-top:6px">${prog.map(itemRuta).join('') || '<p class="mut">Hoy no tienes clientes programados en ruta.</p>'}</div>
-    ${fuera.length ? `<div class="small mut" style="margin-top:8px;font-weight:700">Fuera de ruta</div><div class="list">${fuera.map(id => itemRuta(C(id))).join('')}</div>` : ''}
+  <h2 style="margin:2px 0 14px">Hola, ${esc(yo().nombre.split(' ')[0])}</h2>
+  ${rech.length ? `<div class="alert bad" style="margin:0 0 12px;cursor:pointer" onclick="FM.t='rechazado';go('mis')">❌ Tienes <b>${rech.length}</b> pedido${rech.length > 1 ? 's' : ''} rechazado${rech.length > 1 ? 's' : ''} por corregir</div>` : ''}
+  <div class="tiles">
+    ${tile('🛒', '#e8eef9', 'Tomar pedido', 'Nuevo pedido', "go('pedido')", true)}
+    ${tile('🧾', '#e7f5ee', 'Mis pedidos', porAprobar.length ? porAprobar.length + ' por aprobar' : 'Al día', "FM.t='por_aprobar';go('mis')")}
+    ${tile('💵', '#fdf1e2', 'Cobrar', porCobrar ? porCobrar + ' con saldo' : 'Nada pendiente', "go('cobrar')")}
+    ${tile('🏪', '#f3e9f1', 'Clientes', mc.length + ' clientes', "go('clientes')")}
+    ${tile('📍', '#e6f2fb', 'Ruta de hoy', prog.length ? hechos + ' de ' + prog.length + ' visitados' : 'Sin ruta hoy', "go('ruta')")}
+    ${tile('📊', '#eef0e4', 'Mi comisión', 'Metas del mes', "go('auto')")}
   </div>
-  <div class="kpis" style="grid-template-columns:repeat(2,1fr)">
-    <div class="kpi" onclick="FM.t='por_aprobar';go('mis')" style="cursor:pointer"><div class="l">Por aprobar</div><div class="v" style="color:var(--warn)">${porAprobar.length}</div><div class="s">${fmt(sum(porAprobar, o => o.total))}</div></div>
-    <div class="kpi"><div class="l">Cartera mis clientes</div><div class="v">${fmtK(cartera)}</div><div class="s">Vencida <b style="color:var(--bad)">${fmtK(vencida)}</b></div></div>
-  </div>
-  ${caja.length || liqs.length ? `<div class="card"><h3>💵 Mi caja</h3>
-    ${caja.length ? `<div class="row between"><div><b style="font-size:18px">${fmt(sum(caja, x => x.a.valor))}</b><div class="small mut">${caja.length} recaudos por entregar · efectivo ${fmt(sum(caja.filter(x => x.a.medio === 'Efectivo'), x => x.a.valor))}</div></div><button class="btn acc" onclick="formLiquidar()">Liquidar</button></div>` : '<p class="small mut" style="margin:0">No tienes recaudos por entregar.</p>'}
-    ${liqs.length ? `<div class="list" style="margin-top:8px">${liqs.map(l => `<div class="it"><div class="x"><b>${fmt(l.total)}</b><span class="small mut">${fFecha(l.fecha)} ${fHora(l.ts)} · ${l.items.length} recaudos${l.diferencia ? ' · diferencia ' + fmt(l.diferencia) : ''}</span></div>${bLiq(l)}</div>`).join('')}</div>` : ''}</div>` : ''}
-  ${rech.length ? `<div class="card" style="border-color:var(--bad)"><h3 style="color:var(--bad)">❌ Pedidos rechazados</h3><div class="list">${rech.map(o => `<div class="it"><div class="x"><b>${esc(C(o.clienteId).nombre)}</b><span class="small">${esc(o.motivo || '')}</span></div><button class="btn sm acc" onclick="corregir('${o.id}')">Corregir</button></div>`).join('')}</div></div>` : ''}
-  ${seg.length || recuperar.length ? `<div class="card"><h3>📌 Pendientes y para recuperar</h3><div class="list">
-    ${seg.map(n => { const c = C(n.clienteId); return `<div class="it"><span class="b ${n.proximo < T ? 'bad' : n.proximo === T ? 'warn' : 'info'}">${n.proximo < T ? 'Atrasado' : n.proximo === T ? 'Hoy' : 'Mañana'}</span><div class="x" onclick="ficha('${c.id}')" style="cursor:pointer"><b>${esc(c.nombre)}</b><span class="small mut">${esc(n.texto)}</span></div><button class="btn sm ok" onclick="hecho('${n.id}')">✓</button></div>`; }).join('')}
-    ${recuperar.map(x => `<div class="it"><span class="b ${x.e.k}">${x.e.d} días</span><div class="x" onclick="ficha('${x.c.id}')" style="cursor:pointer"><b>${esc(x.c.nombre)}</b><span class="small mut">Sin comprar · visita: ${diasTxt(x.c)}</span></div><button class="btn sm" onclick="iniciarPedido('${x.c.id}')">Pedido</button></div>`).join('')}
-  </div></div>` : ''}
-  <div class="card"><h3>Últimos pedidos</h3><div class="list">${recientes.map(o => `<div class="it" onclick="verPedido('${o.id}')" style="cursor:pointer"><div class="x"><b>${esc(C(o.clienteId).nombre)}</b><span class="small mut">${fFecha(o.fecha)} ${fHora(o.ts)} · ${fmt(o.total)}${enCola(o.id) ? ' · ⏳ por subir' : ''}</span></div>${bEstado(o.estado)}</div>`).join('') || '<p class="mut">Aún no hay pedidos.</p>'}</div></div>`;
+  ${pendHoy.length ? `<div class="card" style="margin-top:14px"><h3>Pendientes de hoy</h3><div class="list">${pendHoy.map(n => { const c = C(n.clienteId); return `<div class="it"><div class="x" onclick="ficha('${c.id}')" style="cursor:pointer"><b>${esc(c.nombre)}</b><span class="small mut">${esc(n.texto)}</span></div><button class="btn sm ok" onclick="hecho('${n.id}')">✓</button></div>`; }).join('')}</div></div>` : ''}`;
+}
+
+/* ---------- RUTA DE HOY ---------- */
+function vRuta() {
+  const T = TODAY(), dw = diaSemana(T);
+  const prog = programados(VID, T).sort((a, b) => a.nombre.localeCompare(b.nombre)), progIds = new Set(prog.map(c => c.id));
+  const vis = visitasDe(VID, T), visIds = new Set(vis.map(v => v.clienteId));
+  const fuera = [...new Set(vis.filter(v => !progIds.has(v.clienteId)).map(v => v.clienteId))];
+  const item = c => { const v = visitaHoy(c.id); return `<div class="cli"><div class="x" onclick="ficha('${c.id}')" style="cursor:pointer"><b>${esc(c.nombre)}</b><span class="small mut">${esc(c.barrio)}, ${esc(c.municipio)}</span></div>${v ? bRes(v.resultado) : `<button class="btn sm acc" onclick="llegue('${c.id}')">📍 Llegué</button>`}</div>`; };
+  $('app').innerHTML = `
+  <button class="volver" onclick="go('inicio')">‹ Inicio</button>
+  <h2>Ruta de hoy · ${DIAS_L[dw]}</h2>
+  <div class="small mut" style="margin:-4px 2px 10px">${prog.filter(c => visIds.has(c.id)).length} de ${prog.length} visitados</div>
+  ${prog.map(item).join('') || '<div class="card"><p class="mut" style="margin:0">Hoy no tienes clientes programados.</p></div>'}
+  ${fuera.length ? `<div class="small mut" style="margin:12px 2px 6px;font-weight:700">Fuera de ruta</div>${fuera.map(id => item(C(id))).join('')}` : ''}`;
+}
+
+/* ---------- COBRAR: clientes con saldo + mi caja ---------- */
+function vCobrar() {
+  const T = TODAY(), caja = cajaPendiente();
+  const rows = misClientes().map(c => {
+    const ab = pedidos().filter(o => o.clienteId === c.id && saldoPedido(o) > 0);
+    const falta = sum(ab, o => Math.max(0, saldoPedido(o) - reportado(o)));
+    return { c, saldo: saldoCliente(c.id), falta, ven: ab.some(o => o.vence < T) };
+  }).filter(x => x.saldo > 0).sort((a, b) => (b.ven - a.ven) || (b.falta - a.falta));
+  $('app').innerHTML = `
+  <button class="volver" onclick="go('inicio')">‹ Inicio</button>
+  <h2>Cobrar</h2>
+  <div class="card"><div class="row between"><div><div class="small mut">Tengo por entregar a oficina</div><b style="font-size:22px">${fmt(sum(caja, x => x.a.valor))}</b></div>${caja.length ? `<button class="btn acc" onclick="formLiquidar()">Entregar</button>` : ''}</div></div>
+  <div class="small mut" style="margin:4px 2px 8px">${rows.length ? rows.length + ' cliente' + (rows.length > 1 ? 's' : '') + ' con saldo · primero los vencidos' : ''}</div>
+  ${rows.map(x => `<div class="cli"><div class="x" onclick="ficha('${x.c.id}','fac')" style="cursor:pointer"><b>${esc(x.c.nombre)}</b><span class="small" style="color:${x.ven ? 'var(--bad)' : 'var(--mut)'}">${x.ven ? 'Vencido · ' : ''}${fmt(x.saldo)}${x.falta < x.saldo ? ' · ' + fmt(x.saldo - x.falta) + ' por confirmar' : ''}</span></div>
+    ${x.falta > 0 ? `<button class="btn sm acc" onclick="formRecaudo('${x.c.id}')">Cobrar</button>` : '<span class="b warn">Reportado</span>'}</div>`).join('') || '<div class="card"><p class="mut" style="margin:0">Ninguno de tus clientes tiene saldo pendiente. 🎉</p></div>'}`;
+}
+
+/* ---------- MÁS: lo que se usa menos ---------- */
+function vMasV() {
+  const op = (ic, t, d, js) => `<div class="cli" onclick="${js}" style="cursor:pointer"><div class="x"><b>${ic} ${t}</b><span class="small mut">${d}</span></div><span class="mut">›</span></div>`;
+  $('app').innerHTML = `
+  <h2>Más</h2>
+  ${op('🏪', 'Mis clientes', 'Buscar, ver ficha o crear un cliente nuevo', "go('clientes')")}
+  ${op('📊', 'Mi comisión y metas', 'Cómo vas este mes', "go('auto')")}
+  ${op('🚪', 'Cerrar sesión', yo().nombre, 'salir()')}`;
 }
 
 /* ---------- AUTOGESTIÓN: meta, comisión y actividad del mes ---------- */
@@ -887,7 +938,8 @@ function vAuto() {
   const atendidos = new Set(delMes.map(o => o.clienteId)).size, total = misClientes().length;
   const fila = (l, v, st) => `<div class="tot"${st ? ` style="${st}"` : ''}><span>${l}</span><span>${v}</span></div>`;
   $('app').innerHTML = `
-  <h2>📊 Autogestión</h2>
+  <button class="volver" onclick="go('inicio')">‹ Inicio</button>
+  <h2>📊 Mi comisión</h2>
   ${cm.meta ? `<div class="card"><div class="row between"><h3 style="margin:0">🎯 Meta del mes</h3><b>${cm.avance.toFixed(0)}%</b></div>
     <div style="position:relative;height:14px;background:#f1ecef;border-radius:8px;margin:10px 0 6px;overflow:hidden"><div style="height:100%;width:${Math.min(100, cm.avance).toFixed(1)}%;background:${cm.avance >= cm.esperado ? 'var(--ok)' : 'var(--acc)'};border-radius:8px"></div><div title="Donde deberías ir hoy" style="position:absolute;top:0;bottom:0;left:${Math.min(100, cm.esperado).toFixed(1)}%;width:2px;background:var(--pri)"></div></div>
     <div class="small">${fmt(cm.venta)} de ${fmt(cm.meta)} · ${cm.avance >= cm.esperado ? '<b style="color:var(--ok)">vas al día</b>' : `<b style="color:var(--warn)">te faltan ${fmt(cm.meta * cm.esperado / 100 - cm.venta)} para ir al día</b>`}</div>
