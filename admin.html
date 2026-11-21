@@ -108,12 +108,24 @@ td.n,th.n{text-align:right}
 .tabs2{display:flex;gap:6px;margin:12px 0 10px;flex-wrap:wrap}
 .tabs2 button{border:1px solid var(--line);background:#fff;border-radius:20px;padding:6px 12px;font-size:12px;font-weight:600;color:var(--mut)}
 .tabs2 button.on{background:var(--pri);color:#fff;border-color:var(--pri)}
-#toast{position:fixed;bottom:84px;left:50%;transform:translateX(-50%);background:#2a2127;color:#fff;padding:10px 18px;border-radius:10px;opacity:0;transition:.25s;pointer-events:none;z-index:60;font-weight:600;max-width:90vw;text-align:center}
+#toast{position:fixed;bottom:84px;left:50%;transform:translateX(-50%);background:#2a2127;color:#fff;padding:10px 18px;border-radius:10px;opacity:0;transition:.25s;pointer-events:none;z-index:80;font-weight:600;max-width:90vw;text-align:center}
 #toast.show{opacity:1}
 .login{max-width:380px;margin:40px auto;background:#fff;border-radius:16px;padding:24px;border:1px solid var(--line)}
 .login h2{margin-top:0}
 .login label{margin-bottom:12px}
 #print{display:none}
+#previa{position:fixed;inset:0;z-index:70;background:rgba(35,24,32,.82);display:none;flex-direction:column}
+#previa.on{display:flex}
+#previa .pv-bar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:10px 12px;background:#2a2127;color:#fff}
+#previa .pv-bar b{margin-right:auto;font-size:15px}
+#previa .pv-tabs{display:flex;gap:6px;flex-wrap:wrap;width:100%}
+#previa .pv-tabs button{border:1px solid #6b5a66;background:transparent;color:#fff;border-radius:999px;padding:6px 12px;font:inherit;font-size:13px;cursor:pointer}
+#previa .pv-tabs button.on{background:#fff;color:#2a2127;border-color:#fff;font-weight:700}
+#previa .pv-scroll{flex:1;overflow:auto;padding:16px 8px 40px}
+#previa .pv-page{width:816px;min-height:1056px;margin:0 auto;background:#fff;color:#000;font-size:12px;box-shadow:0 6px 30px rgba(0,0,0,.4)}
+#previa .pv-page .doc{padding:12mm 14mm}
+#previa .pv-page table{font-size:12px}
+#previa .pv-page th,#previa .pv-page td{padding:5px 6px;white-space:normal}
 @media print{
   body>*:not(#print){display:none!important}
   @page{size:letter portrait;margin:0}
@@ -180,6 +192,7 @@ td.n,th.n{text-align:right}
 </div>
 <div id="toast"></div>
 <div id="print"></div>
+<div id="previa"></div>
 <script>
 /* =====================================================================
    nucleo.js — compartido por vendedor.html y admin.html
@@ -989,7 +1002,7 @@ function cotizacion() {
   openModal('Cotización · ' + c.nombre, `
     <p class="small mut" style="margin-top:0">El pedido sigue <b>Por aprobar</b> y el inventario no se mueve. Cuando el cliente confirme, lo apruebas y facturas.</p>
     <textarea id="cotTxt" style="width:100%;min-height:260px;font-family:inherit">${esc(texto)}</textarea>
-    <div class="mfoot"><button class="btn sec" onclick="revRender()">‹ Volver al pedido</button><button class="btn sec" onclick="imprimirCot()">🖨 Imprimir / PDF</button>
+    <div class="mfoot"><button class="btn sec" onclick="revRender()">‹ Volver al pedido</button><button class="btn sec" onclick="vistaPrevia(null,'cot')">👁 Vista previa</button><button class="btn sec" onclick="imprimirCot()">🖨 Imprimir / PDF</button>
       ${c.tel ? `<a class="btn wa" target="_blank" onclick="this.href=waLink('${esc(c.tel)}',$('cotTxt').value)" href="#">WhatsApp al cliente</a>` : '<span class="small mut">El cliente no tiene celular registrado</span>'}</div>`);
 }
 function imprimirCot() {
@@ -1010,7 +1023,7 @@ function imprimirCot() {
       <div class="tot big"><span>TOTAL</span><span>${fmt(total)}</span></div></div>
     <p style="margin-top:10px">Forma de pago: <b>${cred ? 'Crédito ' + c.plazo + ' días' : 'Contado'}</b> · Válida hasta <b>${fFecha(addDays(TODAY(), 8))}</b>, sujeta a disponibilidad de inventario.</p>
     <div class="firmas"><div>Elaboró</div><div>Aprobado por el cliente (firma)</div></div></div>`;
-  setTimeout(() => window.print(), 50);
+  salidaDoc();
 }
 function rechazar() {
   const mot = $('revMot').value.trim(); if (!mot) return toast('Escribe el motivo para el vendedor');
@@ -1230,7 +1243,7 @@ function verPedido(id, recienFacturado, recienDespachado) {
     ${abonos(o).length ? `<h3 style="margin-top:14px">Abonos</h3><div class="list">${abonos(o).sort((a, b) => a.fecha.localeCompare(b.fecha)).map(a => `<div class="it"><span class="b ${a.confirmado ? 'ok' : 'warn'}">${a.confirmado ? 'Confirmado' : 'Por confirmar'}</span><div class="x"><b>${fmt(a.valor)} · ${a.medio}</b><span class="small mut">${fFecha(a.fecha)}${a.reportadoPor ? ' · reportó ' + esc(V(a.reportadoPor).nombre) : ''}</span></div>${a.confirmado && o.estado !== 'anulado' ? `<button class="btn sm sec" onclick="reversarAbono('${o.id}','${a.id}')">Reversar</button>` : ''}</div>`).join('')}</div>` : ''}
     <div class="mfoot">
       ${!['anulado', 'rechazado', 'por_aprobar'].includes(o.estado) ? `<button class="btn bad" onclick="estado('${o.id}','anulado')">Anular</button>` : ''}
-      ${o.factura && o.estado !== 'anulado' ? `<button class="btn sec" onclick="imprimirVenta('${o.id}')">🖨 Documento de venta</button><button class="btn sec" onclick="imprimirCobro('${o.id}')">🖨 Cuenta de cobro</button><button class="btn sec" onclick="imprimir('${o.id}')">🖨 Remisión</button>` : ''}
+      ${o.factura && o.estado !== 'anulado' ? `<button class="btn" onclick="vistaPrevia('${o.id}','cobro')">👁 Vista previa</button><button class="btn sec" onclick="imprimirVenta('${o.id}')">🖨 Documento de venta</button><button class="btn sec" onclick="imprimirCobro('${o.id}')">🖨 Cuenta de cobro</button><button class="btn sec" onclick="imprimir('${o.id}')">🖨 Remisión</button>` : ''}
       ${saldo ? `<button class="btn acc" onclick="formAbono('${o.id}')">Registrar abono</button>` : ''}
       ${c.tel ? `<a class="btn wa" target="_blank" href="${waLink(c.tel, textoPedido(o))}">WhatsApp al cliente</a>` : ''}
       ${o.estado === 'facturado' ? `<button class="btn acc" onclick="estado('${o.id}','despachado')">Marcar despachado</button>` : ''}
@@ -1247,7 +1260,7 @@ function imprimirRemisiones(ids) {
   const docs = ids.map(PED).filter(o => o && o.factura);
   if (!docs.length) return toast('No hay remisiones para imprimir');
   $('print').innerHTML = docs.map((o, i) => docRemision(o) + (i < docs.length - 1 ? '<div style="page-break-after:always"></div>' : '')).join('');
-  setTimeout(() => window.print(), 50);
+  salidaDoc();
 }
 function docRemision(o) {
   const c = C(o.clienteId), bruto = brutoDe(o);
@@ -1261,6 +1274,26 @@ function docRemision(o) {
     <div class="firmas"><div>Despachó</div><div>Recibí conforme (firma y sello)</div></div>
     <p style="font-size:10px;margin-top:20px">Documento interno de despacho. No reemplaza la factura electrónica de venta.</p></div>`;
 }
+
+/* ---------- VISTA PREVIA de documentos (cuenta de cobro, documento de venta, remisión, cotización) ---------- */
+let PREVIA = null;
+const PV_DOCS = { cobro: ['Cuenta de cobro', id => imprimirCobro(id)], venta: ['Documento de venta', id => imprimirVenta(id)], rem: ['Remisión', id => imprimirRemisiones([id])], cot: ['Cotización', () => imprimirCot()] };
+function salidaDoc() {
+  if (!PREVIA) { setTimeout(() => window.print(), 50); return; }
+  const { id, tipo } = PREVIA, tabs = tipo === 'cot' ? ['cot'] : ['cobro', 'venta', 'rem'];
+  $('previa').innerHTML = `<div class="pv-bar"><b>👁 Vista previa · ${PV_DOCS[tipo][0]}</b>
+      <button class="btn" onclick="window.print()">🖨 Imprimir / PDF</button><button class="btn sec" onclick="cerrarPrevia()">✕ Cerrar</button>
+      ${tabs.length > 1 ? `<div class="pv-tabs">${tabs.map(t => `<button class="${t === tipo ? 'on' : ''}" onclick="vistaPrevia('${id}','${t}')">${PV_DOCS[t][0]}</button>`).join('')}</div>` : ''}</div>
+    <div class="pv-scroll"><div class="pv-page">${$('print').innerHTML}</div></div>`;
+  const pg = $('previa').querySelector('.pv-page'), z = Math.min(1, (window.innerWidth - 16) / 816);
+  if (z < 1) pg.style.zoom = z;
+  $('previa').classList.add('on');
+}
+function vistaPrevia(id, tipo) {
+  PREVIA = { id, tipo: tipo || 'cobro' };
+  try { PV_DOCS[PREVIA.tipo][1](id); } finally { PREVIA = null; }
+}
+function cerrarPrevia() { $('previa').classList.remove('on'); $('previa').innerHTML = ''; }
 
 /* ---------- DOCUMENTO DE VENTA (interno, no es factura electrónica) ---------- */
 function imprimirVenta(id) {
@@ -1300,7 +1333,7 @@ function imprimirVenta(id) {
         <div class="tot big"><span>TOTAL</span><span>${fmt(o.total)}</span></div></td></tr></table>
     <div class="firmas"><div>Entregó</div><div>Recibí conforme (firma y sello)</div></div>
     <p style="font-size:10px;margin-top:16px;color:#555">Documento interno de venta. No es factura electrónica de venta.</p></div>`;
-  setTimeout(() => window.print(), 50);
+  salidaDoc();
 }
 
 // Número a letras (pesos colombianos), para la cuenta de cobro
@@ -1354,7 +1387,7 @@ function imprimirCobro(id) {
     <p style="margin:10px 0 0">Forma de pago: <b>${cred ? 'Crédito ' + (c.plazo || '') + ' días · vence ' + fFecha(o.vence) : 'Contado'}</b></p>
     <p style="margin:14px 0 0;font-size:11.5px;${B};padding:8px;border-radius:6px">Declaro que soy persona natural <b>no responsable del impuesto sobre las ventas (IVA)</b> y que no estoy obligado a expedir factura de venta. Esta cuenta de cobro sirve de base para que el adquiriente genere el <b>documento soporte en adquisiciones efectuadas a sujetos no obligados a facturar</b>.</p>
     <div style="margin-top:46px;width:60%"><div style="border-top:1px solid #000;padding-top:4px"><b>${esc(e.titular)}</b><br>${esc(e.doc)}</div></div></div>`;
-  setTimeout(() => window.print(), 50);
+  salidaDoc();
 }
 
 /* ---------- CLIENTES ---------- */
