@@ -1209,7 +1209,7 @@ function imprimirVenta(id) {
           ${e.logo ? logoDoc(72) : `<div style="width:64px;height:64px;border-radius:14px;background:#5b2350;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:24px">${esc(logo)}</div>`}
           <div><div style="font-size:26px;font-weight:800;color:#5b2350;line-height:1.05">${esc(EMPRESA)}</div>${e.lema ? `<div style="font-size:11px;color:#b07d1f;font-weight:700;letter-spacing:.5px;text-transform:uppercase;margin-top:2px">${esc(e.lema)}</div>` : ''}</div>
         </div>
-        <div style="margin-top:6px;font-size:11px;line-height:1.4">${e.doc ? esc(e.doc) + '<br>' : ''}${[e.dir, e.tel ? 'Tel. ' + e.tel : ''].filter(Boolean).map(esc).join(' · ')}</div>
+        <div style="margin-top:6px;font-size:11px;line-height:1.4">${e.titular ? '<b>' + esc(e.titular) + '</b><br>' : ''}${e.doc ? esc(e.doc) + '<br>' : ''}${[e.dir, e.tel ? 'Tel. ' + e.tel : ''].filter(Boolean).map(esc).join(' · ')}</div>
       </td>
       <td style="border:0;vertical-align:top;text-align:right">
         <div style="display:inline-block;${B};border-radius:8px;padding:8px 12px;text-align:center">
@@ -1262,7 +1262,7 @@ function numLetras(n) {
 // el documento soporte en adquisiciones a no obligados a facturar (Res. DIAN 000167 de 2021).
 function imprimirCobro(id) {
   const o = PED(id), c = C(o.clienteId), e = DB.config.empresa || {}, bruto = brutoDe(o), cred = o.pago === 'credito', ls = lineasDe(o);
-  if (!e.titular || !e.doc) { toast('Primero llena "Titular" y "NIT o cédula" en Equipo y ajustes › Empresa'); return; }
+  if (!e.titular || !e.doc) { toast('Primero llena "Nombre o razón social" y "NIT o cédula" en Equipo y ajustes › Empresa'); return; }
   if (!c.nit) toast('Ojo: el cliente no tiene NIT/cédula registrado. Agrégalo en su ficha.');
   const B = 'border:1px solid #444', fLarga = d => { const [y, m, dd] = d.split('-'); return `${+dd} de ${['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'][+m - 1]} de ${y}`; };
   const ciudad = ((e.dir || '').split(',').pop() || '').trim() || 'Quibdó';
@@ -1275,7 +1275,7 @@ function imprimirCobro(id) {
     <p style="margin:14px 0 2px;font-weight:800;font-size:14px">${esc(c.nombre).toUpperCase()}</p>
     <p style="margin:0">NIT / C.C.: <b>${esc(c.nit || '____________________')}</b>${c.barrio || c.municipio ? ` · ${esc([c.barrio, c.municipio].filter(Boolean).join(', '))}` : ''}</p>
     <p style="margin:16px 0 2px;text-align:center;font-weight:800;font-size:14px;letter-spacing:1px">DEBE A</p>
-    <p style="margin:0;text-align:center"><b>${esc(e.titular).toUpperCase()}</b><br>${esc(e.doc)}${e.tel ? ' · Tel. ' + esc(e.tel) : ''}${e.dir ? '<br>' + esc(e.dir) : ''}</p>
+    <p style="margin:0;text-align:center"><b>${esc(e.titular).toUpperCase()}</b><br>Nombre comercial: ${esc(EMPRESA)}<br>${esc(e.doc)}${e.tel ? ' · Tel. ' + esc(e.tel) : ''}${e.dir ? '<br>' + esc(e.dir) : ''}</p>
     <p style="margin:16px 0 6px">La suma de: <b>${numLetras(o.total)}${o.total >= 1e6 && o.total % 1e6 === 0 ? ' DE' : ''} PESOS M/CTE (${fmt(o.total)})</b></p>
     <p style="margin:0 0 6px">Por concepto de: venta de mercancía, según el siguiente detalle:</p>
     <table style="width:100%;border-collapse:collapse"><thead><tr style="background:#eee">
@@ -2657,10 +2657,10 @@ function vEquipo() {
     <div class="card"><h3>Empresa</h3>
       <div class="row" style="gap:12px;margin-bottom:10px">${(DB.config.empresa || {}).logo ? `<img src="${(DB.config.empresa || {}).logo}" style="width:72px;height:72px;object-fit:contain;border-radius:12px;border:1px solid var(--line);background:#fff">` : '<div class="ph" style="width:72px;height:72px;font-size:13px;text-align:center">Sin logo</div>'}
         <div class="row" style="gap:6px"><label class="btn sm acc btnfile">🖼 ${(DB.config.empresa || {}).logo ? 'Cambiar logo' : 'Subir logo'}<input type="file" accept="image/*" onchange="subirLogo(this)"></label>${(DB.config.empresa || {}).logo ? '<button class="btn sm sec" onclick="quitarLogo()">Quitar</button>' : ''}</div></div>
-      <div class="fg"><label>Nombre de la empresa<input id="cfEN" value="${esc((DB.config.empresa || {}).nombre || EMPRESA)}" oninput="$('cfEI').placeholder = inicialesDe(this.value)"></label><label>Iniciales del logo<input id="cfEI" maxlength="3" value="${esc((DB.config.empresa || {}).iniciales || '')}" placeholder="${esc(inicialesDe(EMPRESA))}"></label></div>
+      <div class="fg"><label>Nombre comercial (la marca que ven los clientes)<input id="cfEN" value="${esc((DB.config.empresa || {}).nombre || EMPRESA)}" oninput="$('cfEI').placeholder = inicialesDe(this.value)"></label><label>Iniciales del logo<input id="cfEI" maxlength="3" value="${esc((DB.config.empresa || {}).iniciales || '')}" placeholder="${esc(inicialesDe(EMPRESA))}"></label></div>
       <label class="f" style="margin-top:10px">Frase (página de inicio)<input id="cfEL" value="${esc((DB.config.empresa || {}).lema || '')}" placeholder="Distribuidora capilar · Canal TAT Chocó"></label>
       <div class="fg" style="margin-top:10px"><label>NIT o cédula<input id="cfED" value="${esc((DB.config.empresa || {}).doc || '')}" placeholder="Ej: CC 1.077.000.000"></label><label>Teléfono / WhatsApp<input id="cfET" value="${esc((DB.config.empresa || {}).tel || '')}"></label></div>
-      <label class="f" style="margin-top:10px">Titular (persona natural que firma las cuentas de cobro)<input id="cfETit" value="${esc((DB.config.empresa || {}).titular || '')}" placeholder="Ej: Héctor Javier Hernández Anaya"></label>
+      <label class="f" style="margin-top:10px">Nombre o razón social (como aparece en el RUT)<input id="cfETit" value="${esc((DB.config.empresa || {}).titular || '')}" placeholder="Ej: Héctor Javier Hernández Anaya"></label>
       <label class="f" style="margin-top:10px">Dirección<input id="cfEA" value="${esc((DB.config.empresa || {}).dir || '')}" placeholder="Ej: Cra 4 # 25-10, Quibdó"></label>
       <p class="small mut">Aparece en el encabezado, documentos de venta, remisiones, planillas y mensajes de WhatsApp. Para el logo usa solo el ícono (cuadrado, sin texto): el nombre ya se escribe al lado.</p>
       <div class="mfoot"><button class="btn" onclick="guardarEmpresa()">Guardar empresa</button></div></div>
