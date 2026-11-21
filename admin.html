@@ -1165,7 +1165,7 @@ function verPedido(id, recienFacturado, recienDespachado) {
     ${abonos(o).length ? `<h3 style="margin-top:14px">Abonos</h3><div class="list">${abonos(o).sort((a, b) => a.fecha.localeCompare(b.fecha)).map(a => `<div class="it"><span class="b ${a.confirmado ? 'ok' : 'warn'}">${a.confirmado ? 'Confirmado' : 'Por confirmar'}</span><div class="x"><b>${fmt(a.valor)} · ${a.medio}</b><span class="small mut">${fFecha(a.fecha)}${a.reportadoPor ? ' · reportó ' + esc(V(a.reportadoPor).nombre) : ''}</span></div>${a.confirmado && o.estado !== 'anulado' ? `<button class="btn sm sec" onclick="reversarAbono('${o.id}','${a.id}')">Reversar</button>` : ''}</div>`).join('')}</div>` : ''}
     <div class="mfoot">
       ${!['anulado', 'rechazado', 'por_aprobar'].includes(o.estado) ? `<button class="btn bad" onclick="estado('${o.id}','anulado')">Anular</button>` : ''}
-      ${o.factura && o.estado !== 'anulado' ? `<button class="btn sec" onclick="imprimirVenta('${o.id}')">🖨 Documento de venta</button><button class="btn sec" onclick="imprimir('${o.id}')">🖨 Remisión</button>` : ''}
+      ${o.factura && o.estado !== 'anulado' ? `<button class="btn sec" onclick="imprimirVenta('${o.id}')">🖨 Documento de venta</button><button class="btn sec" onclick="imprimirCobro('${o.id}')">🖨 Cuenta de cobro</button><button class="btn sec" onclick="imprimir('${o.id}')">🖨 Remisión</button>` : ''}
       ${saldo ? `<button class="btn acc" onclick="formAbono('${o.id}')">Registrar abono</button>` : ''}
       ${c.tel ? `<a class="btn wa" target="_blank" href="${waLink(c.tel, textoPedido(o))}">WhatsApp al cliente</a>` : ''}
       ${o.estado === 'facturado' ? `<button class="btn acc" onclick="estado('${o.id}','despachado')">Marcar despachado</button>` : ''}
@@ -1235,6 +1235,60 @@ function imprimirVenta(id) {
         <div class="tot big"><span>TOTAL</span><span>${fmt(o.total)}</span></div></td></tr></table>
     <div class="firmas"><div>Entregó</div><div>Recibí conforme (firma y sello)</div></div>
     <p style="font-size:10px;margin-top:16px;color:#555">Documento interno de venta. No es factura electrónica de venta.</p></div>`;
+  setTimeout(() => window.print(), 50);
+}
+
+// Número a letras (pesos colombianos), para la cuenta de cobro
+function numLetras(n) {
+  n = Math.round(Math.abs(+n || 0));
+  if (n === 0) return 'CERO';
+  const U = ['', 'UN', 'DOS', 'TRES', 'CUATRO', 'CINCO', 'SEIS', 'SIETE', 'OCHO', 'NUEVE', 'DIEZ', 'ONCE', 'DOCE', 'TRECE', 'CATORCE', 'QUINCE', 'DIECISÉIS', 'DIECISIETE', 'DIECIOCHO', 'DIECINUEVE', 'VEINTE', 'VEINTIÚN', 'VEINTIDÓS', 'VEINTITRÉS', 'VEINTICUATRO', 'VEINTICINCO', 'VEINTISÉIS', 'VEINTISIETE', 'VEINTIOCHO', 'VEINTINUEVE'];
+  const D = ['', '', '', 'TREINTA', 'CUARENTA', 'CINCUENTA', 'SESENTA', 'SETENTA', 'OCHENTA', 'NOVENTA'];
+  const C = ['', 'CIENTO', 'DOSCIENTOS', 'TRESCIENTOS', 'CUATROCIENTOS', 'QUINIENTOS', 'SEISCIENTOS', 'SETECIENTOS', 'OCHOCIENTOS', 'NOVECIENTOS'];
+  const menorMil = x => {
+    if (x === 100) return 'CIEN';
+    const c = Math.floor(x / 100), r = x % 100;
+    const dec = r < 30 ? U[r] : D[Math.floor(r / 10)] + (r % 10 ? ' Y ' + U[r % 10] : '');
+    return [C[c], dec].filter(Boolean).join(' ');
+  };
+  const partes = [];
+  const mill = Math.floor(n / 1e6), miles = Math.floor((n % 1e6) / 1000), resto = n % 1000;
+  if (mill) partes.push(mill === 1 ? 'UN MILLÓN' : numLetras(mill) + ' MILLONES');
+  if (miles) partes.push(miles === 1 ? 'MIL' : menorMil(miles) + ' MIL');
+  if (resto) partes.push(menorMil(resto));
+  return partes.join(' ');
+}
+// Cuenta de cobro de persona natural no responsable de IVA. El cliente la usa para generar
+// el documento soporte en adquisiciones a no obligados a facturar (Res. DIAN 000167 de 2021).
+function imprimirCobro(id) {
+  const o = PED(id), c = C(o.clienteId), e = DB.config.empresa || {}, bruto = brutoDe(o), cred = o.pago === 'credito', ls = lineasDe(o);
+  if (!e.titular || !e.doc) { toast('Primero llena "Titular" y "NIT o cédula" en Equipo y ajustes › Empresa'); return; }
+  if (!c.nit) toast('Ojo: el cliente no tiene NIT/cédula registrado. Agrégalo en su ficha.');
+  const B = 'border:1px solid #444', fLarga = d => { const [y, m, dd] = d.split('-'); return `${+dd} de ${['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'][+m - 1]} de ${y}`; };
+  const ciudad = ((e.dir || '').split(',').pop() || '').trim() || 'Quibdó';
+  $('print').innerHTML = `<div class="doc" style="-webkit-print-color-adjust:exact;print-color-adjust:exact;font-size:12.5px;line-height:1.45">
+    <table style="width:100%;border:0;margin-bottom:6px"><tr>
+      <td style="border:0;vertical-align:top">${e.logo ? logoDoc(60) : ''}<div style="font-size:20px;font-weight:800;color:#5b2350">${esc(EMPRESA)}</div></td>
+      <td style="border:0;vertical-align:top;text-align:right"><div style="display:inline-block;${B};border-radius:8px;padding:8px 12px;text-align:center">
+        <div style="font-size:11px;letter-spacing:.5px">CUENTA DE COBRO No.</div><div style="font-size:20px;font-weight:800">${o.factura.num}</div></div></td></tr></table>
+    <p style="margin:10px 0">${esc(ciudad)}, ${fLarga(o.factura.fecha)}</p>
+    <p style="margin:14px 0 2px;font-weight:800;font-size:14px">${esc(c.nombre).toUpperCase()}</p>
+    <p style="margin:0">NIT / C.C.: <b>${esc(c.nit || '____________________')}</b>${c.barrio || c.municipio ? ` · ${esc([c.barrio, c.municipio].filter(Boolean).join(', '))}` : ''}</p>
+    <p style="margin:16px 0 2px;text-align:center;font-weight:800;font-size:14px;letter-spacing:1px">DEBE A</p>
+    <p style="margin:0;text-align:center"><b>${esc(e.titular).toUpperCase()}</b><br>${esc(e.doc)}${e.tel ? ' · Tel. ' + esc(e.tel) : ''}${e.dir ? '<br>' + esc(e.dir) : ''}</p>
+    <p style="margin:16px 0 6px">La suma de: <b>${numLetras(o.total)}${o.total >= 1e6 && o.total % 1e6 === 0 ? ' DE' : ''} PESOS M/CTE (${fmt(o.total)})</b></p>
+    <p style="margin:0 0 6px">Por concepto de: venta de mercancía, según el siguiente detalle:</p>
+    <table style="width:100%;border-collapse:collapse"><thead><tr style="background:#eee">
+      <th style="${B};padding:5px;width:26px">#</th><th style="${B};padding:5px">Detalle</th><th style="${B};padding:5px;text-align:right">Cant.</th><th style="${B};padding:5px;text-align:right">Vr. unit</th><th style="${B};padding:5px;text-align:right">Vr. total</th></tr></thead><tbody>
+      ${ls.map((l, i) => `<tr><td style="${B};padding:4px;text-align:center">${i + 1}</td><td style="${B};padding:4px">${esc(P(l.pid).nombre)}</td><td style="${B};padding:4px;text-align:right">${fmtCant(P(l.pid), l.cant)}</td><td style="${B};padding:4px;text-align:right">${fmt(l.precio)}</td><td style="${B};padding:4px;text-align:right">${fmt(l.cant * l.precio)}</td></tr>`).join('')}
+    </tbody></table>
+    <div style="max-width:280px;margin:8px 0 0 auto">
+      <div class="tot"><span>Subtotal</span><span>${fmt(bruto)}</span></div>
+      ${o.desc ? `<div class="tot"><span>Descuento ${o.desc}%</span><span>−${fmt(bruto - o.total)}</span></div>` : ''}
+      <div class="tot big"><span>TOTAL</span><span>${fmt(o.total)}</span></div></div>
+    <p style="margin:10px 0 0">Forma de pago: <b>${cred ? 'Crédito ' + (c.plazo || '') + ' días · vence ' + fFecha(o.vence) : 'Contado'}</b></p>
+    <p style="margin:14px 0 0;font-size:11.5px;${B};padding:8px;border-radius:6px">Declaro que soy persona natural <b>no responsable del impuesto sobre las ventas (IVA)</b> y que no estoy obligado a expedir factura de venta. Esta cuenta de cobro sirve de base para que el adquiriente genere el <b>documento soporte en adquisiciones efectuadas a sujetos no obligados a facturar</b>.</p>
+    <div style="margin-top:46px;width:60%"><div style="border-top:1px solid #000;padding-top:4px"><b>${esc(e.titular)}</b><br>${esc(e.doc)}</div></div></div>`;
   setTimeout(() => window.print(), 50);
 }
 
@@ -2606,6 +2660,7 @@ function vEquipo() {
       <div class="fg"><label>Nombre de la empresa<input id="cfEN" value="${esc((DB.config.empresa || {}).nombre || EMPRESA)}" oninput="$('cfEI').placeholder = inicialesDe(this.value)"></label><label>Iniciales del logo<input id="cfEI" maxlength="3" value="${esc((DB.config.empresa || {}).iniciales || '')}" placeholder="${esc(inicialesDe(EMPRESA))}"></label></div>
       <label class="f" style="margin-top:10px">Frase (página de inicio)<input id="cfEL" value="${esc((DB.config.empresa || {}).lema || '')}" placeholder="Distribuidora capilar · Canal TAT Chocó"></label>
       <div class="fg" style="margin-top:10px"><label>NIT o cédula<input id="cfED" value="${esc((DB.config.empresa || {}).doc || '')}" placeholder="Ej: CC 1.077.000.000"></label><label>Teléfono / WhatsApp<input id="cfET" value="${esc((DB.config.empresa || {}).tel || '')}"></label></div>
+      <label class="f" style="margin-top:10px">Titular (persona natural que firma las cuentas de cobro)<input id="cfETit" value="${esc((DB.config.empresa || {}).titular || '')}" placeholder="Ej: Héctor Javier Hernández Anaya"></label>
       <label class="f" style="margin-top:10px">Dirección<input id="cfEA" value="${esc((DB.config.empresa || {}).dir || '')}" placeholder="Ej: Cra 4 # 25-10, Quibdó"></label>
       <p class="small mut">Aparece en el encabezado, documentos de venta, remisiones, planillas y mensajes de WhatsApp. Para el logo usa solo el ícono (cuadrado, sin texto): el nombre ya se escribe al lado.</p>
       <div class="mfoot"><button class="btn" onclick="guardarEmpresa()">Guardar empresa</button></div></div>
@@ -2650,7 +2705,7 @@ async function subirLogo(input) {
 function quitarLogo() { if (!confirm('¿Quitar el logo?')) return; guardar({ 'config/empresa/logo': null }); aplicarMarca(); render(); }
 const logoDoc = (px) => { const e = DB.config.empresa || {}; return e.logo ? `<img src="${e.logo}" style="width:${px}px;height:${px}px;object-fit:contain">` : ''; };
 function guardarEmpresa() {
-  const e = { nombre: $('cfEN').value.trim(), iniciales: $('cfEI').value.trim().toUpperCase(), lema: $('cfEL').value.trim(), doc: $('cfED').value.trim(), tel: $('cfET').value.trim(), dir: $('cfEA').value.trim() };
+  const e = { nombre: $('cfEN').value.trim(), iniciales: $('cfEI').value.trim().toUpperCase(), lema: $('cfEL').value.trim(), doc: $('cfED').value.trim(), tel: $('cfET').value.trim(), dir: $('cfEA').value.trim(), titular: $('cfETit').value.trim() };
   if (!e.nombre) return toast('Escribe el nombre de la empresa');
   const upd = {}; for (const k in e) upd['config/empresa/' + k] = e[k];
   guardar(upd); aplicarMarca(); render(); toast('Empresa guardada');
