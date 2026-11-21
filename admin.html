@@ -917,6 +917,12 @@ function revRender() {
     <div class="tw rev"><table><thead><tr><th>Producto</th><th class="n">Pedido</th><th class="n">Stock</th><th class="n">A facturar</th><th class="n">Precio</th><th class="n">Subtotal</th><th class="n">Margen</th></tr></thead><tbody>
       ${REV.lineas.map((l, i) => { const p = P(l.pid), mg = RP.porLinea[i]; return `<tr><td style="white-space:normal">${esc(p.nombre)}<div class="small mut">${esc(p.sku)}</div></td><td class="n">${fmtCant(p, l.pedido)}</td><td class="n"><span class="b ${p.stock >= l.pedido ? 'ok' : p.stock ? 'warn' : 'bad'}">${fmtCant(p, p.stock)}</span></td><td class="n"><input type="number" min="0" max="${p.stock}" value="${l.cant}" onchange="revCant(${i},this.value)">${factorDe(p) > 1 ? `<div class="small mut">und = ${fmtCant(p, l.cant)}</div>` : ''}</td><td class="n">${precioDoc(p, l)}${l.precio < p.precio ? '<div class="small" style="color:var(--ok)">x volumen</div>' : ''}</td><td class="n">${fmt(l.cant * l.precio)}</td><td class="n" style="font-weight:700;color:${colMargen(mg)}">${l.cant ? (mg != null ? mg.toFixed(0) + '%' : '<span class="small" style="color:var(--bad);font-weight:400">sin costo</span>') : '—'}</td></tr>`; }).join('')}
     </tbody></table></div>
+    <div class="row" style="margin-top:8px;align-items:flex-end;flex-wrap:wrap">
+      <label class="f grow" style="min-width:200px">Agregar producto<input id="revProd" list="dlProdRev" placeholder="Nombre o código…"></label>
+      <label class="f" style="width:90px">Cantidad<input id="revAddCant" type="number" min="1" inputmode="numeric" value="1"></label>
+      <button class="btn sec" onclick="revAdd()">＋ Agregar</button>
+    </div>
+    <datalist id="dlProdRev">${productos().map(p => `<option value="${esc(p.sku + ' · ' + p.nombre)}">${fmt(p.precio)} · disp. ${fmtCant(p, p.stock)}</option>`).join('')}</datalist>
     <div class="row" style="margin-top:12px;align-items:flex-start;justify-content:space-between">
       <div class="fg" style="flex:1 1 300px">
         <label>Descuento<select onchange="REV.desc=+this.value;revRender()">${[0, 2, 3, 5, 8, 10].map(d => `<option value="${d}" ${REV.desc === d ? 'selected' : ''}>${d}%</option>`).join('')}</select></label>
@@ -934,18 +940,77 @@ function revRender() {
     ${REV.pago === 'credito' && saldo + total > c.cupo ? `<div class="alert warn">Con este pedido el saldo quedaría en ${fmt(saldo + total)} y el cupo es ${fmt(c.cupo)}.</div>` : ''}
     ${REV.rechazo ? `<label class="f" style="margin-top:10px">Motivo del rechazo (lo verá el vendedor)<textarea id="revMot" placeholder="Ej: Cliente con cartera vencida, cobrar antes de despachar"></textarea></label>
       <div class="mfoot"><button class="btn sec" onclick="REV.rechazo=false;revRender()">Volver</button><button class="btn bad" onclick="rechazar()">Confirmar rechazo</button></div>`
-    : `<div class="mfoot"><button class="btn bad" onclick="REV.rechazo=true;revRender()">Rechazar</button><button class="btn ok" id="btnFac" onclick="facturar()">✓ Aprobar y facturar</button></div>`}`, true);
+    : `<div class="mfoot"><button class="btn bad" onclick="REV.rechazo=true;revRender()">Rechazar</button><button class="btn sec" onclick="revGuardar()">💾 Guardar cambios</button><button class="btn sec" onclick="cotizacion()">📄 Cotización</button><button class="btn ok" id="btnFac" onclick="facturar()">✓ Aprobar y facturar</button></div>`}`, true);
   if (REV.rechazo) setTimeout(() => $('revMot') && $('revMot').focus(), 50);
 }
 const revCtx = () => { const X = {}; REV.lineas.forEach(l => X[l.pid] = (X[l.pid] || 0) + l.cant); return X; };
 function revCant(i, v) {
   const l = REV.lineas[i], st = P(l.pid).stock; let n = Math.max(0, parseInt(v, 10) || 0);
   if (n > st) { toast('Stock disponible: ' + st); n = st; }
-  l.cant = n; l.precio = n === l.pedido ? lineasDe(PED(REV.id))[i].precio : precioPara(P(l.pid), n, revCtx());
+  const orig0 = lineasDe(PED(REV.id))[i];
+  l.cant = n; l.precio = n === l.pedido && orig0 && orig0.pid === l.pid ? orig0.precio : precioPara(P(l.pid), n, revCtx());
   const g = grupoDe(P(l.pid));   // grupo de volumen: al cambiar una referencia se recalculan las demás del grupo
   if (g) { const orig = lineasDe(PED(REV.id)), igual = REV.lineas.every(m => grupoDe(P(m.pid)) !== g || m.cant === m.pedido);
-    REV.lineas.forEach((m, j) => { if (grupoDe(P(m.pid)) === g) m.precio = igual ? orig[j].precio : precioPara(P(m.pid), m.cant, revCtx()); }); }
+    REV.lineas.forEach((m, j) => { if (grupoDe(P(m.pid)) === g) m.precio = igual && orig[j] && orig[j].pid === m.pid ? orig[j].precio : precioPara(P(m.pid), m.cant, revCtx()); }); }
   REV.externa = $('revExt').value; revRender();
+}
+// Agregar un producto al pedido mientras está "Por aprobar" (el cliente pidió algo más)
+function revAdd() {
+  const p = pFind($('revProd').value.trim()), q = parseInt($('revAddCant').value, 10);
+  if (!p) return toast('Selecciona un producto de la lista');
+  if (!(q > 0)) return toast('Escribe la cantidad');
+  REV.externa = $('revExt').value;
+  const ya = REV.lineas.find(l => l.pid === p.id);
+  if (ya) ya.cant += q; else REV.lineas.push({ pid: p.id, cant: q, pedido: 0, precio: p.precio });
+  REV.lineas.forEach(l => { if (!l.pedido || l.cant !== l.pedido) l.precio = precioPara(P(l.pid), l.cant, revCtx()); });
+  if (q > p.stock) toast('Ojo: stock disponible ' + fmtCant(p, p.stock));
+  revRender();
+}
+// Guarda los cambios y el pedido sigue "Por aprobar" (para cotizar o esperar la respuesta del cliente)
+function revGuardar(silencioso) {
+  const o = PED(REV.id); if (o.estado !== 'por_aprobar') { closeModal(); return toast('El pedido cambió de estado'); }
+  const ls = REV.lineas.filter(l => l.cant > 0);
+  if (!ls.length) return toast('El pedido quedaría vacío. Si no va, recházalo.');
+  REV.externa = $('revExt') ? $('revExt').value : REV.externa;
+  guardar({ [`pedidos/${o.id}/lineas`]: ls.map(l => ({ pid: l.pid, cant: l.cant, precio: l.precio })), [`pedidos/${o.id}/total`]: calcTotal(ls, REV.desc),
+    [`pedidos/${o.id}/desc`]: REV.desc, [`pedidos/${o.id}/pago`]: REV.pago, [`pedidos/${o.id}/editadoTs`]: Date.now() });
+  REV.lineas = ls.map(l => ({ ...l, pedido: l.cant }));
+  if (!silencioso) { toast('Cambios guardados · sigue Por aprobar'); revRender(); }
+}
+// Cotización: documento para que el cliente apruebe antes de facturar (no mueve inventario)
+function cotizacion() {
+  const o = PED(REV.id), c = C(o.clienteId), e = DB.config.empresa || {}, ls = REV.lineas.filter(l => l.cant > 0);
+  if (!ls.length) return toast('No hay productos para cotizar');
+  revGuardar(true);   // lo cotizado queda guardado en el pedido
+  const bruto = sum(ls, l => l.cant * l.precio), total = calcTotal(ls, REV.desc), cred = REV.pago === 'credito';
+  const vence = addDays(TODAY(), 8);
+  const texto = `*Cotización ${EMPRESA}* · ${numPedido(o)}\n${c.nombre}\n\n` + ls.map(l => `• ${fmtCant(P(l.pid), l.cant)} ${P(l.pid).nombre} = ${fmt(l.cant * l.precio)}`).join('\n')
+    + (REV.desc ? `\n\nSubtotal ${fmt(bruto)}\nDescuento ${REV.desc}%: −${fmt(bruto - total)}` : '') + `\n\n*Total: ${fmt(total)}*\nPago: ${cred ? 'crédito ' + c.plazo + ' días' : 'contado'}\nVálida hasta ${fFecha(vence)}, sujeta a disponibilidad.\n\n¿Me confirma para despacharle?`;
+  openModal('Cotización · ' + c.nombre, `
+    <p class="small mut" style="margin-top:0">El pedido sigue <b>Por aprobar</b> y el inventario no se mueve. Cuando el cliente confirme, lo apruebas y facturas.</p>
+    <textarea id="cotTxt" style="width:100%;min-height:260px;font-family:inherit">${esc(texto)}</textarea>
+    <div class="mfoot"><button class="btn sec" onclick="revRender()">‹ Volver al pedido</button><button class="btn sec" onclick="imprimirCot()">🖨 Imprimir / PDF</button>
+      ${c.tel ? `<a class="btn wa" target="_blank" onclick="this.href=waLink('${esc(c.tel)}',$('cotTxt').value)" href="#">WhatsApp al cliente</a>` : '<span class="small mut">El cliente no tiene celular registrado</span>'}</div>`);
+}
+function imprimirCot() {
+  const o = PED(REV.id), c = C(o.clienteId), e = DB.config.empresa || {}, ls = REV.lineas.filter(l => l.cant > 0);
+  const bruto = sum(ls, l => l.cant * l.precio), total = calcTotal(ls, REV.desc), cred = REV.pago === 'credito', B = 'border:1px solid #444';
+  $('print').innerHTML = `<div class="doc" style="-webkit-print-color-adjust:exact;print-color-adjust:exact;font-size:12px">
+    <table style="width:100%;border:0;margin-bottom:8px"><tr>
+      <td style="border:0;vertical-align:top">${e.logo ? logoDoc(60) : ''}<div style="font-size:22px;font-weight:800;color:#5b2350">${esc(EMPRESA)}</div>
+        <div style="font-size:11px;line-height:1.4;margin-top:4px">${e.titular ? esc(e.titular) + '<br>' : ''}${e.doc ? esc(e.doc) + '<br>' : ''}${[e.dir, e.tel ? 'Tel. ' + e.tel : ''].filter(Boolean).map(esc).join(' · ')}</div></td>
+      <td style="border:0;vertical-align:top;text-align:right"><div style="display:inline-block;${B};border-radius:8px;padding:8px 12px;text-align:center">
+        <div style="font-size:11px;letter-spacing:.5px">COTIZACIÓN</div><div style="font-size:18px;font-weight:800">${numPedido(o)}</div><div style="font-size:11px">${fFecha(TODAY())}</div></div></td></tr></table>
+    <p style="margin:6px 0"><b>Cliente:</b> ${esc(c.nombre)}${c.nit ? ' · NIT/C.C. ' + esc(c.nit) : ''}${c.barrio || c.municipio ? ' · ' + esc([c.barrio, c.municipio].filter(Boolean).join(', ')) : ''}</p>
+    <table style="width:100%;border-collapse:collapse"><thead><tr style="background:#eee"><th style="${B};padding:5px;width:26px">#</th><th style="${B};padding:5px">Producto</th><th style="${B};padding:5px;text-align:right">Cant.</th><th style="${B};padding:5px;text-align:right">Vr. unit</th><th style="${B};padding:5px;text-align:right">Vr. total</th></tr></thead><tbody>
+      ${ls.map((l, i) => `<tr><td style="${B};padding:4px;text-align:center">${i + 1}</td><td style="${B};padding:4px">${esc(P(l.pid).nombre)}</td><td style="${B};padding:4px;text-align:right">${fmtCant(P(l.pid), l.cant)}</td><td style="${B};padding:4px;text-align:right">${fmt(l.precio)}</td><td style="${B};padding:4px;text-align:right">${fmt(l.cant * l.precio)}</td></tr>`).join('')}
+    </tbody></table>
+    <div style="max-width:280px;margin:8px 0 0 auto"><div class="tot"><span>Subtotal</span><span>${fmt(bruto)}</span></div>
+      ${REV.desc ? `<div class="tot"><span>Descuento ${REV.desc}%</span><span>−${fmt(bruto - total)}</span></div>` : ''}
+      <div class="tot big"><span>TOTAL</span><span>${fmt(total)}</span></div></div>
+    <p style="margin-top:10px">Forma de pago: <b>${cred ? 'Crédito ' + c.plazo + ' días' : 'Contado'}</b> · Válida hasta <b>${fFecha(addDays(TODAY(), 8))}</b>, sujeta a disponibilidad de inventario.</p>
+    <div class="firmas"><div>Elaboró</div><div>Aprobado por el cliente (firma)</div></div></div>`;
+  setTimeout(() => window.print(), 50);
 }
 function rechazar() {
   const mot = $('revMot').value.trim(); if (!mot) return toast('Escribe el motivo para el vendedor');
